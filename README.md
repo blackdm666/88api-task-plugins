@@ -1,0 +1,55 @@
+# 88API Task Plugins
+
+独立维护和发布 NewAPI 任务插件。日常更新插件不需要重新构建 NewAPI 镜像，也不需要重启服务。
+
+| 插件 | 稳定标识 | 初始独立版本 |
+| --- | --- | --- |
+| Minimax-H3 | `minimax-h3` | `2.0.0` |
+| XM-Video | `xm-video` | `3.0.0` |
+
+这两个初始版本与现有88API镜像和生产自定义插件的源码一致，仅迁移维护及发布位置。
+
+## 添加插件市场
+
+在 NewAPI 的“任务插件 → 插件市场 → 管理源”添加：
+
+- 名称：`88API`
+- 索引：`https://raw.githubusercontent.com/blackdm666/88api-task-plugins/marketplace/index.json`
+
+刷新后可查看版本并安装或更新。安装由NewAPI校验SHA-256、编译插件并激活；插件源码及安装记录保存在该实例数据库中。已有内置基础版不受发布影响，新安装的版本会作为自定义版本覆盖同key基础版。发布到市场不会自动替换正在运行的版本。
+
+## 日常维护
+
+1. 修改 `plugins/<key>/plugin.js`，递增 `meta.version`，保持key不变。
+2. 执行 `npm test`、`npm run build`；本仓库无npm依赖，要求Node.js 24及以上。
+3. 提交并推送main。GitHub Actions会在锁定的真实NewAPI沙箱中运行兼容性和协议测试。
+4. 全部通过后，自动更新marketplace分支中的版本存档及index.json。已发布版本不能覆盖，历史版本持续保留。
+5. 在目标NewAPI后台查看新版本、确认差异后更新。需要回退时，从版本历史激活此前兼容版本。
+
+市场发布目前接受稳定的 `x.y.z` 版本号。不要用相同版本号发布不同源码，否则NewAPI本身也会拒绝这种覆盖。
+
+## NewAPI 与插件的分工
+
+- 本仓库：插件请求转换、结果解析、参数校验、模型适配与用量提取。
+- NewAPI：用户界面、渠道分配、权限、计费执行、任务存储和插件运行框架。
+- 镜像继续保留基础插件，方便首次部署；日常插件更新走本市场。只有需要更新镜像基础快照时，才主动同步到NewAPI仓库。
+- 修改管理页面的文字、按钮或宿主接口，仍然属于NewAPI主程序更新。
+
+## 兼容性与校验
+
+`host.lock.json`固定已测试的NewAPI源提交。当前插件使用API v1、`dynamicModels`及`openai_video`，要求88API派生版本`v1.0.0-rc.37-88api.6`或具备相同能力的宿主。仅看到API v1不代表所有早期NewAPI版本都支持这些扩展。
+
+工作流只验证插件，不构建或发布NewAPI镜像。测试宿主位于隔离的`.host/`目录，镜像源码仓库不会被修改。升级测试宿主时应显式更新host.lock.json并通过相同回归。
+
+如需本地运行宿主测试，先将`blackdm666/new-api`检出到`.host/`并切到host.lock.json指定提交，再执行：
+
+```sh
+npm run build
+npm run prepare:host
+cd .host
+GOWORK=off go test ./plugins ./pkg/jsplugin ./relay/channel/task/jsplugin ./controller -run 'IndependentPluginCatalogue|BuiltIn|XinMeng|TestDynamicPluginHTTPRetryAndBilling' -count=1
+```
+
+## 来源与许可证
+
+插件源码从 [blackdm666/new-api](https://github.com/blackdm666/new-api) 的88API维护分支分离，遵循 [QuantumNous/new-api](https://github.com/QuantumNous/new-api) 的任务插件API。保留AGPL-3.0-or-later许可证，见LICENSE。仓库不包含任何实例的密钥、渠道配置或用户数据。

@@ -1,0 +1,72 @@
+name: Validate and publish task plugins
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: task-plugins-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+      - name: Test publishing contracts
+        run: npm test
+      - name: Build marketplace catalogue
+        run: npm run build
+      - name: Read pinned host
+        id: host
+        run: |
+          node --input-type=module <<'JS'
+          import fs from 'node:fs';
+          const lock = JSON.parse(fs.readFileSync('host.lock.json', 'utf8'));
+          if (!/^[a-f0-9]{40}$/.test(lock.commit) || !/^[\w.-]+\/[\w.-]+$/.test(lock.repository)) throw new Error('Invalid host lock');
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `repository=${lock.repository}\ncommit=${lock.commit}\n`);
+          JS
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          repository: ${{ steps.host.outputs.repository }}
+          ref: ${{ steps.host.outputs.commit }}
+          path: .host
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version-file: .host/go.mod
+          cache-dependency-path: |
+            .host/go.sum
+            .host/relaykit/go.sum
+      - run: npm run prepare:host
+      - name: Validate in the real NewAPI sandbox and HTTP adapters
+        working-directory: .host
+        env:
+          GOWORK: 'off'
+        run: go test ./plugins ./pkg/jsplugin ./relay/channel/task/jsplugin ./controller -run 'IndependentPluginCatalogue|BuiltIn|XinMeng|TestDynamicPluginHTTPRetryAndBilling' -count=1 -timeout 10m
+
+  publish:
+    needs: validate
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24'
+      - name: Publish immutable versions and catalogue
+        run: node scripts/publish-marketplace.mjs
