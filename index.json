@@ -1,0 +1,50 @@
+{
+  "indexVersion": 1,
+  "name": "88API Task Plugins",
+  "plugins": [
+    {
+      "key": "minimax-h3",
+      "name": "Minimax-H3",
+      "description": {
+        "en": "88API channel integration plugin",
+        "zh": "88API渠道集成插件"
+      },
+      "models": [],
+      "protocols": [
+        "openai_video"
+      ],
+      "latest": "2.0.0",
+      "versions": [
+        {
+          "version": "2.0.0",
+          "path": "plugins/minimax-h3/2.0.0/plugin.js",
+          "sha256": "265d05def143b2e16dd0b24dbdaa500ef23e3be032bad6d056c58148d725473c",
+          "minApiVersion": 1,
+          "kind": "task"
+        }
+      ]
+    },
+    {
+      "key": "xm-video",
+      "name": "XM-Video",
+      "description": {
+        "en": "88API channel integration plugin",
+        "zh": "88API渠道集成插件"
+      },
+      "models": [],
+      "protocols": [
+        "openai_video"
+      ],
+      "latest": "3.0.0",
+      "versions": [
+        {
+          "version": "3.0.0",
+          "path": "plugins/xm-video/3.0.0/plugin.js",
+          "sha256": "9cafd331e48e4cb8c054ab94b2b02d982c57007143fb2fc6e374c326347b9907",
+          "minApiVersion": 1,
+          "kind": "task"
+        }
+      ]
+    }
+  ]
+}
