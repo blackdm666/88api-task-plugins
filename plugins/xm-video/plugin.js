@@ -46,7 +46,7 @@ export const meta = {
   apiVersion: 1,
   key: "xm-video",
   name: "XM-Video",
-  version: "3.0.2",
+  version: "3.0.3",
   author: { name: "88API" },
   description: { en: "88API channel integration plugin", zh: "88API渠道集成插件" },
   models: [],
@@ -97,9 +97,12 @@ function payloadFor(req, model, upstreamModel) {
   const metadata = object(typeof req.metadata === "string" ? JSON.parse(req.metadata) : req.metadata);
   const all = Object.assign({}, metadata, req);
   const sizeRatios = { "1280x720": "16:9", "1920x1080": "16:9", "2560x1440": "16:9", "720x1280": "9:16", "1080x1920": "9:16", "1440x2560": "9:16", "1024x1024": "1:1", "1440x1440": "1:1", "1920x1440": "4:3", "1440x1920": "3:4" };
+  const requestedSize = first(all.size, req.size);
+  const sizeRatio = (cfg.ratios || []).includes(requestedSize) ? requestedSize
+    : sizeRatios[requestedSize] || (requestedSize === "3360x1440" ? "21:9" : "");
   const body = {
     model: upstreamModel && upstreamModel !== model ? upstreamModel : cfg.upstream,
-    ratio: first(all.ratio, all.aspect_ratio, (cfg.ratios || []).includes(req.size) ? req.size : req.size === "3360x1440" ? "21:9" : sizeRatios[req.size], cfg.defaultRatio),
+    ratio: first(all.ratio, all.aspect_ratio, sizeRatio, cfg.defaultRatio),
     duration: secondsFor(req, cfg),
     resolution: cfg.resolution || first(all.resolution, all.quality, all.vquality),
   };
@@ -109,7 +112,7 @@ function payloadFor(req, model, upstreamModel) {
   // legacy SD2.5 "auto" default into 16:9, and keep legacy DVC behavior.
   const isVS25 = /^SD2\.5 (480P|720P|1080P)$/.test(model) &&
     body.model === "lltai-vs-2.5";
-  const requestedRatio = first(all.ratio, all.aspect_ratio);
+  const requestedRatio = first(all.ratio, all.aspect_ratio, sizeRatio);
   if (isVS25 && !requestedRatio) throw new Error("ratio is required for lltai-vs-2.5");
   if (isVS25 && requestedRatio === "auto") throw new Error("auto ratio is not supported by lltai-vs-2.5");
   if (isVS25) {

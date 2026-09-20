@@ -34,6 +34,10 @@ for (const quality of ['480p', '720p', '1080p']) {
     for (const input of [{}, { ratio: 'auto' }, { metadata: { aspect_ratio: 'auto' } }]) {
       assert.throws(() => submit(model, input), /ratio|auto/)
     }
+    for (const size of ['1280x720', '1920x1080', '720x1280', '1024x1024']) {
+      const { body } = submit(model, { size })
+      assert.equal(body.ratio, size === '1280x720' || size === '1920x1080' ? '16:9' : size === '720x1280' ? '9:16' : '1:1')
+    }
     for (const ratio of ['16:9', '9:16', '1:1', '21:9', '3:4', '4:3']) {
       const { body, usage } = submit(model, { ratio })
       assert.equal(body.ratio, ratio)

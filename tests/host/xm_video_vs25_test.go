@@ -48,6 +48,26 @@ func TestXinMengVS25MappedSales(t *testing.T) {
 				legacy := call("buildSubmitRequest", driver)["body"].(map[string]any)
 				assert.Equal(t, ratio, legacy["ratio"])
 			}
+			for _, size := range []string{"1280x720", "1920x1080", "720x1280", "1024x1024"} {
+				decoded := call("decodeRequest", map[string]any{
+					"model": model, "body": map[string]any{"kind": "json", "value": map[string]any{
+						"prompt": "Fixture", "seconds": "30", "size": size,
+					}},
+				})
+				body, err := plugin.Engine.Call(context.Background(), "buildSubmitRequest", map[string]any{
+					"model": model, "upstreamModel": "lltai-vs-2.5",
+					"requestBody": decoded["requestBody"], "baseUrl": "https://example.invalid",
+				})
+				require.NoError(t, err)
+				ratio := body.(map[string]any)["body"].(map[string]any)["ratio"]
+				if size == "1280x720" || size == "1920x1080" {
+					assert.Equal(t, "16:9", ratio)
+				} else if size == "720x1280" {
+					assert.Equal(t, "9:16", ratio)
+				} else {
+					assert.Equal(t, "1:1", ratio)
+				}
+			}
 			for _, value := range []map[string]any{
 				{"prompt": "Fixture", "seconds": "30"},
 				{"prompt": "Fixture", "seconds": "30", "ratio": "auto"},
