@@ -22,6 +22,8 @@ for (const key of lock.plugins) {
 }
 await copyFile(path.join(root, 'tests', 'host', 'catalogue_contract_test.go'),
   path.join(host, 'pkg', 'jsplugin', 'independent_catalogue_test.go'))
+await copyFile(path.join(root, 'tests', 'host', 'xm_video_vs25_test.go'),
+  path.join(host, 'pkg', 'jsplugin', 'independent_xm_video_vs25_test.go'))
 await mkdir(path.join(host, 'web', 'dist'), { recursive: true })
 await writeFile(path.join(host, 'web', 'dist', 'index.html'), '<!doctype html><title>Host contract test</title>\n')
 console.log(`Prepared ${lock.plugins.length} plugin sources in the isolated host checkout`)

@@ -46,7 +46,7 @@ export const meta = {
   apiVersion: 1,
   key: "xm-video",
   name: "XM-Video",
-  version: "3.0.0",
+  version: "3.0.1",
   author: { name: "88API" },
   description: { en: "88API channel integration plugin", zh: "88API渠道集成插件" },
   models: [],
@@ -105,6 +105,13 @@ function payloadFor(req, model, upstreamModel) {
   };
   if (!body.resolution) delete body.resolution;
   if (!body.ratio) delete body.ratio;
+  // Existing SD2.5 clients send (or default to) "auto". VS2.5 does not
+  // support it, so use its 16:9 default only when this mapped provider is
+  // selected. Keep the sales resolution/duration and legacy DVC behavior.
+  if (/^SD2\.5 (480P|720P|1080P)$/.test(model) &&
+      body.model === "lltai-vs-2.5" && body.ratio === "auto") {
+    body.ratio = "16:9";
+  }
   const prompt = text(req.prompt);
   if (prompt) body.prompt = prompt;
   const negative = first(req.negative_prompt, metadata.negative_prompt);
