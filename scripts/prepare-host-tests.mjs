@@ -24,6 +24,18 @@ await copyFile(path.join(root, 'tests', 'host', 'catalogue_contract_test.go'),
   path.join(host, 'pkg', 'jsplugin', 'independent_catalogue_test.go'))
 await copyFile(path.join(root, 'tests', 'host', 'xm_video_vs25_test.go'),
   path.join(host, 'pkg', 'jsplugin', 'independent_xm_video_vs25_test.go'))
+// The pinned host's historical XinMeng test asserted an internal English
+// error string. The plugin now exposes Chinese guidance to canvas users, so
+// align that sandbox-only assertion with the intentional public message.
+const xinmengHostTest = path.join(host, 'pkg', 'jsplugin', 'xinmeng_video_test.go')
+const legacyError = 'assert.ErrorContains(t, err, "too many media references in total")'
+const friendlyError = 'assert.ErrorContains(t, err, "参考素材总数超过当前模型限制")'
+const xinmengTestSource = await readFile(xinmengHostTest, 'utf8')
+if (xinmengTestSource.includes(legacyError)) {
+  await writeFile(xinmengHostTest, xinmengTestSource.replace(legacyError, friendlyError))
+} else if (!xinmengTestSource.includes(friendlyError)) {
+  throw new Error('Pinned host XinMeng test no longer has the expected media-limit assertion')
+}
 await mkdir(path.join(host, 'web', 'dist'), { recursive: true })
 await writeFile(path.join(host, 'web', 'dist', 'index.html'), '<!doctype html><title>Host contract test</title>\n')
 console.log(`Prepared ${lock.plugins.length} plugin sources in the isolated host checkout`)

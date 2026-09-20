@@ -46,7 +46,7 @@ export const meta = {
   apiVersion: 1,
   key: "xm-video",
   name: "XM-Video",
-  version: "3.0.3",
+  version: "3.0.4",
   author: { name: "88API" },
   description: { en: "88API channel integration plugin", zh: "88API渠道集成插件" },
   models: [],
@@ -75,10 +75,10 @@ function secondsFor(req, cfg) {
   const hasDuration = duration !== undefined && duration !== null && duration !== 0 && duration !== "0" && duration !== "";
   const hasSeconds = req.seconds !== undefined && req.seconds !== null && req.seconds !== "" && req.seconds !== 0 && req.seconds !== "0";
   const value = hasDuration ? duration : hasSeconds ? req.seconds : cfg.defaultDuration;
-  if ((typeof value !== "number" && typeof value !== "string") || String(value).trim() === "") throw new Error("duration must be an integer");
+  if ((typeof value !== "number" && typeof value !== "string") || String(value).trim() === "") throw new Error("视频时长请输入整数秒数。");
   const seconds = Number(value);
-  if (!Number.isInteger(seconds) || seconds < cfg.minDuration || seconds > cfg.maxDuration) throw new Error("duration must be an integer between " + cfg.minDuration + " and " + cfg.maxDuration);
-  if (cfg.durations && !cfg.durations.includes(seconds)) throw new Error("unsupported duration");
+  if (!Number.isInteger(seconds) || seconds < cfg.minDuration || seconds > cfg.maxDuration) throw new Error("视频时长需在 " + cfg.minDuration + " 到 " + cfg.maxDuration + " 秒之间。");
+  if (cfg.durations && !cfg.durations.includes(seconds)) throw new Error("当前模型不支持该视频时长，请选择其他时长。");
   return seconds;
 }
 function modelConfig(model) {
@@ -113,8 +113,8 @@ function payloadFor(req, model, upstreamModel) {
   const isVS25 = /^SD2\.5 (480P|720P|1080P)$/.test(model) &&
     body.model === "lltai-vs-2.5";
   const requestedRatio = first(all.ratio, all.aspect_ratio, sizeRatio);
-  if (isVS25 && !requestedRatio) throw new Error("ratio is required for lltai-vs-2.5");
-  if (isVS25 && requestedRatio === "auto") throw new Error("auto ratio is not supported by lltai-vs-2.5");
+  if (isVS25 && !requestedRatio) throw new Error("请选择具体画幅比例后再提交，例如 16:9、9:16 或 1:1。");
+  if (isVS25 && requestedRatio === "auto") throw new Error("当前模型不支持自动比例，请选择具体画幅比例。");
   if (isVS25) {
     body.ratio = requestedRatio;
   }
@@ -128,7 +128,7 @@ function payloadFor(req, model, upstreamModel) {
   for (const entry of [["referenceImages", images], ["referenceVideos", videos], ["referenceAudios", audios]]) {
     if (entry[1].length) {
       for (const value of entry[1]) {
-        if (!text(value) && !(entry[0] === "referenceImages" && (object(value).__fileRef || cfg.nativeMedia && text(object(value).url)))) throw new Error(entry[0] + " must contain media references");
+        if (!text(value) && !(entry[0] === "referenceImages" && (object(value).__fileRef || cfg.nativeMedia && text(object(value).url)))) throw new Error("参考素材不能为空，请检查图片、视频或音频输入。");
       }
       body[entry[0]] = entry[1];
     }
@@ -139,25 +139,25 @@ function payloadFor(req, model, upstreamModel) {
   if (lastFrame) body.lastFrame = lastFrame;
   if (Array.isArray(all.media) && all.media.length) body.media = all.media.slice();
   if (all.seed !== undefined && all.seed !== null) {
-    if (!Number.isSafeInteger(all.seed)) throw new Error("seed must be an integer");
+    if (!Number.isSafeInteger(all.seed)) throw new Error("随机种子必须是整数。");
     body.seed = all.seed;
   }
   if (Object.keys(object(all.camera_control)).length) body.camera_control = Object.assign({}, all.camera_control);
   const generateAudio = all.generateAudio !== undefined && all.generateAudio !== null ? all.generateAudio : all.generate_audio;
   if (generateAudio !== undefined && generateAudio !== null) {
-    if (!cfg.generateAudio) throw new Error("generateAudio is not supported by model " + model);
-    if (typeof generateAudio !== "boolean") throw new Error("generateAudio must be a boolean");
+    if (!cfg.generateAudio) throw new Error("当前模型不支持音频开关，请移除该选项。");
+    if (typeof generateAudio !== "boolean") throw new Error("音频开关参数无效，请选择开启或关闭。");
     body[cfg.nativeMedia ? "generate_audio" : "generateAudio"] = generateAudio;
   }
-  if (!prompt && (!cfg.promptless || !images.length && !videos.length && !audios.length && !firstFrame && !lastFrame && !body.media)) throw new Error("prompt or supported reference media is required");
-  if (Array.from(prompt).length > cfg.maxPrompt) throw new Error("prompt must contain at most " + cfg.maxPrompt + " characters");
-  if (cfg.ratios && !cfg.ratios.includes(body.ratio)) throw new Error("unsupported aspect ratio");
+  if (!prompt && (!cfg.promptless || !images.length && !videos.length && !audios.length && !firstFrame && !lastFrame && !body.media)) throw new Error("请输入提示词，或添加当前模型支持的参考素材。");
+  if (Array.from(prompt).length > cfg.maxPrompt) throw new Error("提示词过长，请控制在 " + cfg.maxPrompt + " 个字符以内。");
+  if (cfg.ratios && !cfg.ratios.includes(body.ratio)) throw new Error("当前模型不支持该画幅比例，请选择其他比例。");
   const imageCount = images.length + (cfg.nativeMedia ? Number(!!firstFrame) + Number(!!lastFrame) : 0);
-  if (imageCount > cfg.images || videos.length > cfg.videos || audios.length > cfg.audios) throw new Error("too many media references");
-  if (cfg.totalMedia && imageCount + videos.length + audios.length > cfg.totalMedia) throw new Error("too many media references in total");
-  if (cfg.visualWithAudio && audios.length && !images.length && !videos.length && !firstFrame && !lastFrame) throw new Error("reference audios require an image or video");
-  if (cfg.framesExclusive && (firstFrame || lastFrame) && (images.length || videos.length || audios.length)) throw new Error("first/last frame mode cannot be mixed with reference media");
-  if (lastFrame && !firstFrame) throw new Error("lastFrame requires firstFrame");
+  if (imageCount > cfg.images || videos.length > cfg.videos || audios.length > cfg.audios) throw new Error("参考素材数量超过当前模型限制，请减少图片、视频或音频数量。");
+  if (cfg.totalMedia && imageCount + videos.length + audios.length > cfg.totalMedia) throw new Error("参考素材总数超过当前模型限制，请减少素材数量。");
+  if (cfg.visualWithAudio && audios.length && !images.length && !videos.length && !firstFrame && !lastFrame) throw new Error("使用参考音频时，请至少同时添加一张图片、一个视频或首尾帧。");
+  if (cfg.framesExclusive && (firstFrame || lastFrame) && (images.length || videos.length || audios.length)) throw new Error("首尾帧不能与普通参考图片、视频或音频同时使用。");
+  if (lastFrame && !firstFrame) throw new Error("请先提供首帧，再提供尾帧。");
   if (cfg.nativeMedia) {
     const nativeImages = images.slice();
     if (firstFrame) nativeImages.push({ url: firstFrame, role: "first_frame" });
@@ -173,35 +173,35 @@ function payloadFor(req, model, upstreamModel) {
 }
 
 export function decodeRequest(ctx) {
-  if (!ctx.body || !["json", "multipart"].includes(ctx.body.kind)) throw new Error("JSON or multipart body required");
+  if (!ctx.body || !["json", "multipart"].includes(ctx.body.kind)) throw new Error("请求格式不正确，请使用 JSON 或 multipart/form-data 提交。");
   let req;
   if (ctx.body.kind === "json") {
-    if (!ctx.body.value || typeof ctx.body.value !== "object" || Array.isArray(ctx.body.value)) throw new Error("JSON object required");
+    if (!ctx.body.value || typeof ctx.body.value !== "object" || Array.isArray(ctx.body.value)) throw new Error("请求内容格式不正确，请提交一个 JSON 对象。");
     req = Object.assign({}, ctx.body.value);
   } else {
     req = {};
     for (const key of Object.keys(ctx.body.fields || {})) {
       const values = ctx.body.fields[key];
-      if (values.length !== 1) throw new Error(key + " must be provided once");
+      if (values.length !== 1) throw new Error("参数重复提交，请检查“" + key + "”参数。");
       req[key] = values[0];
     }
     for (const key of ["metadata", "images", "videos", "audios", "image_urls", "video_urls", "audio_urls", "file_paths", "referenceImages", "reference_images", "referenceVideos", "reference_videos", "referenceAudios", "reference_audios", "media", "camera_control", "seed", "generateAudio", "generate_audio"]) {
       if (req[key] !== undefined) {
-        try { req[key] = JSON.parse(req[key]); } catch (_error) { throw new Error(key + " must be valid JSON"); }
+        try { req[key] = JSON.parse(req[key]); } catch (_error) { throw new Error("参数“" + key + "”格式不正确，请提供有效的 JSON。"); }
       }
     }
     const files = ctx.body.files || [];
-    if (files.length > 1 || files.some(function (file) { return file.field !== "input_reference"; })) throw new Error("only one input_reference file is supported");
+    if (files.length > 1 || files.some(function (file) { return file.field !== "input_reference"; })) throw new Error("参考文件格式不正确，仅支持一个参考文件。");
     if (files.length) {
-      if (req.images || req.image || req.input_reference) throw new Error("input_reference file cannot be combined with image fields");
+      if (req.images || req.image || req.input_reference) throw new Error("参考文件不能与图片参数同时使用，请只保留一种方式。");
       req.images = [{ __fileRef: files[0].ref, encoding: "dataUrl" }];
     }
   }
   if (typeof req.metadata === "string") {
-    try { req.metadata = JSON.parse(req.metadata); } catch (_error) { throw new Error("metadata must be a JSON object or an encoded JSON object"); }
+    try { req.metadata = JSON.parse(req.metadata); } catch (_error) { throw new Error("metadata 参数格式不正确，请提供有效的 JSON 对象。"); }
   }
-  if (req.metadata !== undefined && req.metadata !== null && (typeof req.metadata !== "object" || Array.isArray(req.metadata))) throw new Error("metadata must be an object");
-  if (req.callback_url !== undefined && req.callback_url !== null && req.callback_url !== "") throw new Error("callback_url is not supported for this model; poll GET /v1/videos/{id} for the result");
+  if (req.metadata !== undefined && req.metadata !== null && (typeof req.metadata !== "object" || Array.isArray(req.metadata))) throw new Error("metadata 参数格式不正确，请提供 JSON 对象。");
+  if (req.callback_url !== undefined && req.callback_url !== null && req.callback_url !== "") throw new Error("当前模型不支持回调地址，请在任务列表中查看生成结果。");
   delete req.callback_url;
   req.model = ctx.model;
   const payload = payloadFor(req, ctx.model);
@@ -220,7 +220,7 @@ function taskBody(value) {
   const body = object(value);
   return body.status !== undefined || body.id || body.task_id ? body : object(body.data);
 }
-function errorMessage(body) { return first(object(body.error).message, body.error, body.message, "video generation failed"); }
+function errorMessage(body) { return first(object(body.error).message, body.error, body.message, "视频生成失败，请稍后重试。"); }
 function resultURL(value, depth) {
   if ((depth || 0) > 4) return "";
   if (text(value)) return /^https?:\/\//i.test(text(value)) ? text(value) : "";
@@ -233,7 +233,7 @@ export function parseSubmitResponse(_ctx, response) {
   const body = taskBody(response.body);
   if (["failed", "cancelled", "expired"].includes(String(body.status).toLowerCase())) throw new Error(errorMessage(body));
   const id = first(body.id, body.task_id);
-  if (!id) throw new Error("upstream task id is empty");
+  if (!id) throw new Error("视频任务提交失败，暂未获取到任务编号，请稍后重试。");
   return { taskId: id, taskData: response.body };
 }
 export function buildQueryRequest(ctx) {
@@ -243,13 +243,13 @@ export function parseTaskResult(_ctx, value) {
   const body = taskBody(value);
   const statuses = { pending: "QUEUED", queued: "QUEUED", submitted: "QUEUED", processing: "IN_PROGRESS", in_progress: "IN_PROGRESS", running: "IN_PROGRESS", completed: "SUCCESS", success: "SUCCESS", succeeded: "SUCCESS", done: "SUCCESS", failed: "FAILURE", cancelled: "FAILURE", expired: "FAILURE" };
   const status = statuses[String(body.status || "").trim().toLowerCase()];
-  if (!status) return { status: "UNKNOWN", reason: "unrecognized XinMeng task status" };
+  if (!status) return { status: "UNKNOWN", reason: "暂时无法识别视频任务状态，请稍后重试。" };
   const terminal = status === "SUCCESS" || status === "FAILURE";
   const progress = Number(String(body.progress || "0").replace(/%$/, ""));
   const result = { status: status, progress: terminal ? "100%" : (Number.isFinite(progress) ? Math.max(0, Math.min(99, Math.floor(progress))) : 0) + "%" };
   if (status === "SUCCESS") {
     const url = resultURL(body);
-    if (!url) return { status: "FAILURE", progress: "100%", reason: "XinMeng completed the task without a video URL" };
+    if (!url) return { status: "FAILURE", progress: "100%", reason: "视频生成已完成，但暂时未获取到视频结果，请稍后重试。" };
     result.url = url;
   }
   if (status === "FAILURE") result.reason = errorMessage(body);
@@ -260,7 +260,7 @@ export function parseTaskResult(_ctx, value) {
 export function listArtifacts(task) { return task.status === "SUCCESS" && resultURL(task.data) ? [{ key: "video", type: "video", mimeType: "video/mp4" }] : []; }
 export function buildContentRequest(ctx) {
   const url = resultURL(ctx.data);
-  if (ctx.artifactKey !== "video" || !url) throw new Error("artifact_not_found");
+  if (ctx.artifactKey !== "video" || !url) throw new Error("视频结果暂不可用，请稍后重试。");
   return { url: url, method: ctx.clientRequest.method, credentialless: true };
 }
 export const protocols = {
@@ -270,7 +270,7 @@ export const protocols = {
       const statuses = { NOT_START: "queued", SUBMITTED: "queued", QUEUED: "queued", IN_PROGRESS: "in_progress", SUCCESS: "completed", FAILURE: "failed" };
       const result = { id: task.task_id, object: "video", model: object(task.properties).origin_model_name || "", status: statuses[task.status] || "unknown", progress: Number(String(task.progress || "0").replace("%", "")), created_at: task.created_at };
       if (task.status === "SUCCESS" || task.status === "FAILURE") result.completed_at = task.updated_at;
-      if (task.status === "FAILURE") result.error = { code: "video_generation_failed", message: task.fail_reason || "video generation failed" };
+      if (task.status === "FAILURE") result.error = { code: "video_generation_failed", message: task.fail_reason || "视频生成失败，请稍后重试。" };
       return result;
     },
   },

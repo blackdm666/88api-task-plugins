@@ -32,7 +32,7 @@ for (const quality of ['480p', '720p', '1080p']) {
   })
   test(`${model}: explicit ratio is required and auto is rejected`, () => {
     for (const input of [{}, { ratio: 'auto' }, { metadata: { aspect_ratio: 'auto' } }]) {
-      assert.throws(() => submit(model, input), /ratio|auto/)
+      assert.throws(() => submit(model, input), /画幅比例|自动比例/)
     }
     for (const size of ['1280x720', '1920x1080', '720x1280', '1024x1024']) {
       const { body } = submit(model, { size })
@@ -78,6 +78,37 @@ test('existing duration and reference validation stays in place', () => {
   assert.throws(() => submit('SD2.5 720P', {
     firstFrame: 'https://example.invalid/f', referenceVideos: ['https://example.invalid/v'],
   }))
+})
+
+test('validation errors provide user-facing guidance', () => {
+  assert.throws(
+    () => submit('SD2.5 720P', { ratio: 'auto' }),
+    /当前模型不支持自动比例，请选择具体画幅比例/,
+  )
+  assert.throws(
+    () => submit('SD2.5 720P', {}),
+    /请选择具体画幅比例后再提交/,
+  )
+  assert.throws(
+    () => submit('SD2.5 720P', { ratio: '2:1' }),
+    /当前模型不支持该画幅比例，请选择其他比例/,
+  )
+  assert.throws(
+    () => submit('SD2.5 720P', { duration: 3 }),
+    /视频时长需在 4 到 30 秒之间/,
+  )
+  assert.throws(
+    () => submit('SD2.0 720P', { generateAudio: true }, 'cvd-seedance-2.0'),
+    /当前模型不支持音频开关，请移除该选项/,
+  )
+  assert.throws(
+    () => submit('SD2.5 720P', { prompt: '' }),
+    /请输入提示词，或添加当前模型支持的参考素材/,
+  )
+  assert.throws(
+    () => submit('SD2.5 720P', { lastFrame: 'https://example.invalid/l' }),
+    /请先提供首帧，再提供尾帧/,
+  )
 })
 
 test('SD2.0 and unknown models are not rewritten', () => {
