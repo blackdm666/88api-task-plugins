@@ -24,7 +24,7 @@ func TestXinMengVS25MappedSales(t *testing.T) {
 	for _, quality := range []string{"480p", "720p", "1080p"} {
 		t.Run(quality, func(t *testing.T) {
 			model := "SD2.5 " + strings.ToUpper(quality)
-			for _, ratio := range []string{"auto", "9:16", "21:9"} {
+			for _, ratio := range []string{"9:16", "21:9"} {
 				input := map[string]any{
 					"prompt": "Fixture", "seconds": "30", "generateAudio": false,
 					"metadata": map[string]any{"resolution": "4k", "ratio": ratio},
@@ -37,11 +37,7 @@ func TestXinMengVS25MappedSales(t *testing.T) {
 					"requestBody": decoded["requestBody"], "baseUrl": "https://example.invalid",
 				}
 				body := call("buildSubmitRequest", driver)["body"].(map[string]any)
-				expectedRatio := ratio
-				if ratio == "auto" {
-					expectedRatio = "16:9"
-				}
-				assert.Equal(t, expectedRatio, body["ratio"])
+				assert.Equal(t, ratio, body["ratio"])
 				assert.Equal(t, quality, body["resolution"])
 				assert.Equal(t, "lltai-vs-2.5", body["model"])
 				assert.Equal(t, false, body["generateAudio"])
@@ -51,6 +47,23 @@ func TestXinMengVS25MappedSales(t *testing.T) {
 				driver["upstreamModel"] = "dvc-seedance-2.5"
 				legacy := call("buildSubmitRequest", driver)["body"].(map[string]any)
 				assert.Equal(t, ratio, legacy["ratio"])
+			}
+			for _, value := range []map[string]any{
+				{"prompt": "Fixture", "seconds": "30"},
+				{"prompt": "Fixture", "seconds": "30", "ratio": "auto"},
+			} {
+				decoded := map[string]any{"model": model, "body": map[string]any{
+					"kind": "json", "value": value,
+				}}
+				decodedValue, err := plugin.Engine.CallPath(context.Background(), "protocols",
+					[]string{"openai_video", "decodeRequest"}, decoded)
+				require.NoError(t, err)
+				requestBody := decodedValue.(map[string]any)["requestBody"]
+				_, err = plugin.Engine.Call(context.Background(), "buildSubmitRequest", map[string]any{
+					"model": model, "upstreamModel": "lltai-vs-2.5",
+					"requestBody": requestBody, "baseUrl": "https://example.invalid",
+				})
+				assert.Error(t, err)
 			}
 		})
 	}

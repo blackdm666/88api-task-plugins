@@ -20,7 +20,7 @@ for (const quality of ['480p', '720p', '1080p']) {
     for (const duration of [4, 5, 8, 30]) {
       const { body, usage } = submit(model, {
         duration, resolution: '4k', metadata: { resolution: '720p' },
-        generateAudio: false,
+        ratio: '16:9', generateAudio: false,
       })
       assert.equal(body.model, 'lltai-vs-2.5')
       assert.equal(body.resolution, quality)
@@ -30,15 +30,15 @@ for (const quality of ['480p', '720p', '1080p']) {
       assert.equal(body.ratio, '16:9')
     }
   })
-  test(`${model}: legacy default and auto normalization`, () => {
+  test(`${model}: explicit ratio is required and auto is rejected`, () => {
     for (const input of [{}, { ratio: 'auto' }, { metadata: { aspect_ratio: 'auto' } }]) {
-      const { body, usage } = submit(model, input)
-      assert.equal(body.ratio, '16:9')
-      assert.equal(body.duration, 5)
-      assert.equal(usage.seconds, 5)
+      assert.throws(() => submit(model, input), /ratio|auto/)
     }
     for (const ratio of ['16:9', '9:16', '1:1', '21:9', '3:4', '4:3']) {
-      assert.equal(submit(model, { ratio }).body.ratio, ratio)
+      const { body, usage } = submit(model, { ratio })
+      assert.equal(body.ratio, ratio)
+      assert.equal(body.duration, 5)
+      assert.equal(usage.seconds, 5)
     }
   })
   test(`${model}: legacy DVC mapping stays unchanged`, () => {
@@ -57,10 +57,10 @@ test('VS2.5 media, audio off and frame references stay intact', () => {
     referenceAudios: Array.from({ length: 10 }, (_, i) => `https://example.invalid/a${i}`),
     generateAudio: false,
   }
-  const { body } = submit('SD2.5 720P', references)
+  const { body } = submit('SD2.5 720P', { ...references, ratio: '16:9' })
   for (const [key, value] of Object.entries(references)) assert.deepEqual(body[key], value)
   const frames = { firstFrame: 'https://example.invalid/f', lastFrame: 'https://example.invalid/l' }
-  const framed = submit('SD2.5 1080P', frames).body
+  const framed = submit('SD2.5 1080P', { ...frames, ratio: '16:9' }).body
   assert.equal(framed.firstFrame, frames.firstFrame)
   assert.equal(framed.lastFrame, frames.lastFrame)
 })

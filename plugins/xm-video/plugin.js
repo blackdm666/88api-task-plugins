@@ -46,7 +46,7 @@ export const meta = {
   apiVersion: 1,
   key: "xm-video",
   name: "XM-Video",
-  version: "3.0.1",
+  version: "3.0.2",
   author: { name: "88API" },
   description: { en: "88API channel integration plugin", zh: "88API渠道集成插件" },
   models: [],
@@ -105,12 +105,15 @@ function payloadFor(req, model, upstreamModel) {
   };
   if (!body.resolution) delete body.resolution;
   if (!body.ratio) delete body.ratio;
-  // Existing SD2.5 clients send (or default to) "auto". VS2.5 does not
-  // support it, so use its 16:9 default only when this mapped provider is
-  // selected. Keep the sales resolution/duration and legacy DVC behavior.
-  if (/^SD2\.5 (480P|720P|1080P)$/.test(model) &&
-      body.model === "lltai-vs-2.5" && body.ratio === "auto") {
-    body.ratio = "16:9";
+  // VS2.5 requires an explicit supported ratio. Do not silently turn the
+  // legacy SD2.5 "auto" default into 16:9, and keep legacy DVC behavior.
+  const isVS25 = /^SD2\.5 (480P|720P|1080P)$/.test(model) &&
+    body.model === "lltai-vs-2.5";
+  const requestedRatio = first(all.ratio, all.aspect_ratio);
+  if (isVS25 && !requestedRatio) throw new Error("ratio is required for lltai-vs-2.5");
+  if (isVS25 && requestedRatio === "auto") throw new Error("auto ratio is not supported by lltai-vs-2.5");
+  if (isVS25) {
+    body.ratio = requestedRatio;
   }
   const prompt = text(req.prompt);
   if (prompt) body.prompt = prompt;
