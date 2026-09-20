@@ -35,8 +35,15 @@
       "protocols": [
         "openai_video"
       ],
-      "latest": "3.0.0",
+      "latest": "3.0.1",
       "versions": [
+        {
+          "version": "3.0.1",
+          "path": "plugins/xm-video/3.0.1/plugin.js",
+          "sha256": "8c2b4d51f03c45c63b95ff696e262253a9b240797296e2e7e6722e5cbb446ebc",
+          "minApiVersion": 1,
+          "kind": "task"
+        },
         {
           "version": "3.0.0",
           "path": "plugins/xm-video/3.0.0/plugin.js",
