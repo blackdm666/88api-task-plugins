@@ -84,7 +84,43 @@ func TestXinMengVS25MappedSales(t *testing.T) {
 					"requestBody": requestBody, "baseUrl": "https://example.invalid",
 				})
 				assert.Error(t, err)
+				if value["ratio"] == "auto" {
+					assert.ErrorContains(t, err, "当前模型不支持自动比例，请选择具体画幅比例。")
+				} else {
+					assert.ErrorContains(t, err, "请选择具体画幅比例后再提交，例如 16:9、9:16 或 1:1。")
+				}
 			}
+		})
+	}
+}
+
+func TestXinMengFriendlyMessages(t *testing.T) {
+	source, err := os.ReadFile("../../plugins/tasks/xm-video/plugin.js")
+	require.NoError(t, err)
+	plugin, err := NewRegistry().Register(string(source), Options{})
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		model string
+		input map[string]any
+		want  string
+	}{
+		{"wan3.0-video-720p", map[string]any{"duration": 4.5}, "视频时长请输入整数秒数"},
+		{"SD2.0 720P", map[string]any{"duration": 30}, "4 到 15 秒"},
+		{"seedance-2.0-mini-480p", map[string]any{"generateAudio": true}, "不支持音频开关"},
+		{"kling-3.0-turbo-720p", map[string]any{"audios": []string{"https://example.invalid/a"}}, "不支持参考音频"},
+		{"minimax-h3-768p", map[string]any{"audios": []string{"https://example.invalid/a"}}, "至少同时添加"},
+		{"Seedance-2.0-720p官方版", map[string]any{"ratio": "2:1"}, "当前模型不支持该画幅比例"},
+		{"SD2.5 720P", map[string]any{"metadata": "["}, "metadata 参数格式不正确"},
+	} {
+		t.Run(tc.model+"/"+tc.want, func(t *testing.T) {
+			input := map[string]any{"prompt": "Fixture", "ratio": "16:9"}
+			for key, value := range tc.input {
+				input[key] = value
+			}
+			_, err := plugin.Engine.Call(context.Background(), "decodeRequest", map[string]any{
+				"model": tc.model, "body": map[string]any{"kind": "json", "value": input},
+			})
+			require.ErrorContains(t, err, tc.want)
 		})
 	}
 }

@@ -91,7 +91,7 @@ test('validation errors provide user-facing guidance', () => {
   )
   assert.throws(
     () => submit('SD2.5 720P', { ratio: '2:1' }),
-    /当前模型不支持该画幅比例，请选择其他比例/,
+    /当前模型不支持该画幅比例，请选择：/,
   )
   assert.throws(
     () => submit('SD2.5 720P', { duration: 3 }),
@@ -103,7 +103,7 @@ test('validation errors provide user-facing guidance', () => {
   )
   assert.throws(
     () => submit('SD2.5 720P', { prompt: '' }),
-    /请输入提示词，或添加当前模型支持的参考素材/,
+    /当前模型需要提示词，请填写后再提交/,
   )
   assert.throws(
     () => submit('SD2.5 720P', { lastFrame: 'https://example.invalid/l' }),
