@@ -5,5 +5,5 @@
   "minimum88ApiVersion": "v1.0.0-rc.37-88api.6",
   "apiVersion": 1,
   "requiredFeatures": ["dynamicModels", "openai_video"],
-  "plugins": ["minimax-h3", "xm-video"]
+  "plugins": ["minimax-h3", "minimax-h3-async", "xm-video"]
 }
