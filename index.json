@@ -25,6 +25,28 @@
       ]
     },
     {
+      "key": "minimax-h3-async",
+      "name": "Minimax-H3 Async",
+      "description": {
+        "en": "MiniMax H3 asynchronous video integration",
+        "zh": "MiniMax H3 异步视频集成"
+      },
+      "models": [],
+      "protocols": [
+        "openai_video"
+      ],
+      "latest": "1.0.0",
+      "versions": [
+        {
+          "version": "1.0.0",
+          "path": "plugins/minimax-h3-async/1.0.0/plugin.js",
+          "sha256": "bbdc6232e6c08638d70951228faf6f730101556e5722dfac25230a9d5900dc6f",
+          "minApiVersion": 1,
+          "kind": "task"
+        }
+      ]
+    },
+    {
       "key": "xm-video",
       "name": "XM-Video",
       "description": {
