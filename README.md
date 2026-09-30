@@ -7,7 +7,7 @@
 | GX-Video | `gx-video` | `1.0.0` |
 | Minimax-H3 | `minimax-h3` | `2.0.0` |
 | Minimax-H3 Async | `minimax-h3-async` | `1.0.0` |
-| SD-Video | `sdgo-video` | `1.0.2` |
+| SD-Video | `sdgo-video` | `1.0.3` |
 | XM-Video | `xm-video` | `3.0.0` |
 
 Minimax-H3 与 XM-Video 的初始独立版本与当时88API镜像和生产自定义插件源码一致，仅迁移维护及发布位置；Minimax-H3 Async 是另行新增的插件。
@@ -56,6 +56,10 @@ The adapter keeps XM-style request normalization but emits Ark-native
 supports the documented Seedance 2.5/2.0/1.5/1.0 model limits, gateway
 `task_...` IDs, subsequent Ark `cgt-*` IDs, `content.video_url` results,
 provider errors, completion token evidence, and completion usage facts.
+Provider-native top-level fields outside the XM compatibility surface are
+forwarded unchanged, including `callback_url`; the adapter does not rewrite
+that callback to a NewAPI or Volcano endpoint. Site-compatible fields are
+still normalized so existing XM clients keep working.
 Media supplied to the official endpoint must be reachable by both SDGO and
 the upstream Ark service. The plugin does not put API keys or channel
 configuration in this repository.
