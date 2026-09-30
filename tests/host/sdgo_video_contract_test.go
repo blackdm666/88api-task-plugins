@@ -18,7 +18,7 @@ func TestIndependentPluginCatalogueSDGOVideoContract(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "sdgo-video", plugin.Meta.Key)
 	assert.Equal(t, "SD-Video", plugin.Meta.Name)
-	assert.Equal(t, "1.0.2", plugin.Meta.Version)
+	assert.Equal(t, "1.0.3", plugin.Meta.Version)
 	assert.True(t, plugin.Meta.DynamicModels)
 	assert.Empty(t, plugin.Meta.Models)
 
