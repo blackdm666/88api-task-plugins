@@ -17,7 +17,7 @@ function decode(value = {}, model = 'doubao-seedance-2-5-260628') {
 test('declares the SDGO dynamic plugin and official models remain discoverable', () => {
   assert.equal(plugin.meta.key, 'sdgo-video')
   assert.equal(plugin.meta.name, 'SD-Video')
-  assert.equal(plugin.meta.version, '1.0.2')
+  assert.equal(plugin.meta.version, '1.0.3')
   assert.equal(plugin.meta.dynamicModels, true)
   assert.deepEqual(plugin.meta.usageSchema.resolution.enum, ['480p', '720p', '1080p', '4k'])
   assert.deepEqual(plugin.meta.usageSchema.video_input.enum, ['none', 'present'])
@@ -164,4 +164,23 @@ test('supports 1.0 frames and forwards future Ark fields', () => {
   assert.equal(decoded.requestBody.service_tier, 'flex')
   assert.equal(decoded.requestBody.safety_identifier, 'fixture-user')
   assert.deepEqual(decoded.requestBody.tools, [{ type: 'web_search' }])
+})
+
+test('passes callback_url through unchanged for upstream delivery', () => {
+  const callback_url = 'https://client.example.test/hooks/sdgo-task'
+  const decoded = decode({
+    prompt: 'Callback fixture',
+    duration: 8,
+    callback_url,
+  }, 'doubao-seedance-1-0-pro-250528')
+  assert.equal(decoded.requestBody.callback_url, callback_url)
+
+  const submitted = plugin.buildSubmitRequest({
+    baseUrl: 'https://sdgo.top/api/v3',
+    apiKey: 'fixture-key',
+    model: 'doubao-seedance-1-0-pro-250528',
+    upstreamModel: 'doubao-seedance-1-0-pro-250528',
+    requestBody: decoded.requestBody,
+  })
+  assert.equal(submitted.body.callback_url, callback_url)
 })

@@ -48,7 +48,7 @@ export const meta = {
   apiVersion: 1,
   key: "sdgo-video",
   name: "SD-Video",
-  version: "1.0.2",
+  version: "1.0.3",
   author: { name: "88API" },
   description: {
     en: "Seedance video generation through the SDGO OpenAI-compatible task API",
@@ -308,6 +308,9 @@ const COMPATIBILITY_KEYS = new Set([
 ]);
 
 function copyForwardFields(body, all) {
+  // Preserve provider-native fields verbatim. In particular, callback_url is
+  // supplied by the caller and must reach SDGO/Ark unchanged; it is not a
+  // NewAPI callback endpoint and must not be rewritten by this adapter.
   for (const [key, value] of Object.entries(all)) {
     if (!COMPATIBILITY_KEYS.has(key) && key !== "model" && body[key] === undefined) body[key] = value;
   }
