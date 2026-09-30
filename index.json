@@ -76,6 +76,28 @@
       ]
     },
     {
+      "key": "sdgo-video",
+      "name": "SD-Video",
+      "description": {
+        "en": "Seedance video generation through the SDGO OpenAI-compatible task API",
+        "zh": "通过 SDGO OpenAI 兼容任务接口接入 Seedance 视频生成"
+      },
+      "models": [],
+      "protocols": [
+        "openai_video"
+      ],
+      "latest": "1.0.1",
+      "versions": [
+        {
+          "version": "1.0.1",
+          "path": "plugins/sdgo-video/1.0.1/plugin.js",
+          "sha256": "332b960e9acb7258f4fab35a9ef0446b494886255d60c74a58496379891621b9",
+          "minApiVersion": 1,
+          "kind": "task"
+        }
+      ]
+    },
+    {
       "key": "xm-video",
       "name": "XM-Video",
       "description": {
