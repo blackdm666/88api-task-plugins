@@ -4,11 +4,32 @@
 
 | 插件 | 稳定标识 | 初始独立版本 |
 | --- | --- | --- |
+| GX-Video | `gx-video` | `1.0.0` |
 | Minimax-H3 | `minimax-h3` | `2.0.0` |
 | Minimax-H3 Async | `minimax-h3-async` | `1.0.0` |
 | XM-Video | `xm-video` | `3.0.0` |
 
 Minimax-H3 与 XM-Video 的初始独立版本与当时88API镜像和生产自定义插件源码一致，仅迁移维护及发布位置；Minimax-H3 Async 是另行新增的插件。
+
+## GX-Video
+
+`gx-video` is the independent task-plugin adapter for the GX Seedance-native
+API documented at `https://gengxi.ai`. Configure a NewAPI **Task Plugin**
+channel with the provider Base URL and API key, then expose the required
+models in the channel:
+
+- `artsdance-2-0-fast-260801`
+- `artsdance-2-0-mini-260801`
+- `artsdance-2-0-pro-260801`
+- `artsdance-2-5-pro-260801`
+
+The plugin normalizes the XM-style request fields into the GX contract,
+including public HTTPS media URLs, first/last frames, `adaptive` ratios,
+smart duration `-1`, audio generation, `auto/edit/extend` task types, and
+provider task usage/result fields. It does not modify the existing `xm-video`
+plugin or require a NewAPI image rebuild.
+
+## Minimax-H3 Async
 
 `minimax-h3-async` 从 DMC 插件独立派生，使用 `/v1/api/generate` 和
 `/v1/api/result?id=...`，不会替换原 `minimax-h3` 或其历史任务。
@@ -36,7 +57,7 @@ Minimax-H3 与 XM-Video 的初始独立版本与当时88API镜像和生产自定
 
 ## 日常维护
 
-1. 修改 `plugins/<key>/plugin.js`，递增 `meta.version`，保持key不变。
+1. 修改 `plugins/<key>/plugin.js`，递增 `meta.version`，保持key稳定。
 2. 执行 `npm test`、`npm run build`；本仓库无npm依赖，要求Node.js 24及以上。
 3. 提交并推送main。GitHub Actions会在锁定的真实NewAPI沙箱中运行兼容性和协议测试。
 4. 全部通过后，自动更新marketplace分支中的版本存档及index.json。已发布版本不能覆盖，历史版本持续保留。

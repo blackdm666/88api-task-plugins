@@ -6,7 +6,7 @@ export const meta = {
     en: "88API channel integration plugin",
     zh: "88API渠道集成插件",
   },
-  version: "2.0.1",
+  version: "2.0.0",
   author: { name: "88API" },
   // Internal routing identity. The DMC upstream model remains MiniMax-H3 in
   // buildSubmitRequest; keeping the registry name unique lets this plugin
@@ -46,7 +46,7 @@ function trimmed(value) {
 
 function normalizedBaseUrl(value) {
   const baseUrl = trimmed(value).replace(/\/+$/, "");
-  if (!baseUrl) throw new Error("视频服务尚未配置访问地址，请联系管理员。");
+  if (!baseUrl) throw new Error("base URL is required");
   return baseUrl;
 }
 
@@ -72,17 +72,16 @@ function firstValues() {
 }
 
 function urlPayload(value, field) {
-  const label = { image_url: "图片", video_url: "视频", audio_url: "音频" }[field] || "素材";
   if (typeof value === "string") {
     const url = value.trim();
-    if (!url) throw new Error(label + "地址不能为空，请提供有效的素材链接。");
+    if (!url) throw new Error(field + " URL must not be empty");
     return { url: url };
   }
   if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error(label + "格式不正确，请提供素材链接或有效的文件引用。");
+    throw new Error(field + " URL must be a string or file placeholder");
   }
   if (Object.prototype.hasOwnProperty.call(value, "url")) {
-    if (typeof value.url === "string" && !value.url.trim()) throw new Error(label + "地址不能为空，请提供有效的素材链接。");
+    if (typeof value.url === "string" && !value.url.trim()) throw new Error(field + " URL must not be empty");
     return { url: value.url };
   }
   // NewAPI resolves request-file placeholders after the plugin returns the body.
@@ -96,16 +95,16 @@ function mediaItem(type, value, role) {
 }
 
 function normalizeContentItem(item) {
-  if (!item || typeof item !== "object" || Array.isArray(item)) throw new Error("素材内容格式不正确，请使用包含类型和内容的对象。");
+  if (!item || typeof item !== "object" || Array.isArray(item)) throw new Error("content items must be objects");
   if (item.type === "text") return { type: "text", text: trimmed(item.text) };
   if (item.type === "image_url") return mediaItem("image_url", item.image_url, trimmed(item.role));
   if (item.type === "video_url") return mediaItem("video_url", item.video_url, trimmed(item.role));
   if (item.type === "audio_url") return mediaItem("audio_url", item.audio_url, trimmed(item.role));
-  throw new Error("不支持该素材类型，请使用文本、图片、视频或音频。");
+  throw new Error("content contains an unsupported type");
 }
 
 function normalizeMediaEntry(entry) {
-  if (!entry || typeof entry !== "object" || Array.isArray(entry)) throw new Error("素材条目格式不正确，请提供素材类型和链接。");
+  if (!entry || typeof entry !== "object" || Array.isArray(entry)) throw new Error("media items must be objects");
   const role = trimmed(entry.role) || trimmed(entry.type);
   const value = entry.url !== undefined ? entry.url : entry.uri;
   if (role === "first_frame" || role === "last_frame" || role === "reference_image") {
@@ -120,7 +119,7 @@ function normalizeMediaEntry(entry) {
   if (entry.type === "image_url" || entry.type === "video_url" || entry.type === "audio_url") {
     return normalizeContentItem(entry);
   }
-  throw new Error("素材用途无效，请指定首帧、尾帧、参考图片、参考视频或参考音频。");
+  throw new Error("media contains an unsupported role");
 }
 
 function appendItems(target, type, role, values) {
@@ -130,7 +129,7 @@ function appendItems(target, type, role, values) {
 function assembledContent(req) {
   const metadata = req.metadata && typeof req.metadata === "object" && !Array.isArray(req.metadata) ? req.metadata : {};
   if (metadata.content !== undefined && metadata.content !== null) {
-    if (!Array.isArray(metadata.content)) throw new Error("素材列表格式不正确，metadata.content 必须是数组。");
+    if (!Array.isArray(metadata.content)) throw new Error("metadata.content must be an array");
     const content = metadata.content.map(normalizeContentItem);
     if (!content.some(function (item) { return item.type === "text"; }) && trimmed(req.prompt)) {
       content.unshift({ type: "text", text: trimmed(req.prompt) });
@@ -155,7 +154,7 @@ function assembledContent(req) {
     const frames = firstValues(req.images, req.image, req.input_reference);
     if (frames.length > 0) content.push(mediaItem("image_url", frames[0], "first_frame"));
     if (frames.length > 1) content.push(mediaItem("image_url", frames[1], "last_frame"));
-    if (frames.length > 2) throw new Error("首尾帧模式最多支持 2 张图片，请分别提供首帧和尾帧。");
+    if (frames.length > 2) throw new Error(MODEL + " accepts at most two frame images");
   }
 
   appendItems(content, "image_url", "reference_image", firstValues(metadata.reference_images, metadata.referenceImages, metadata.reference_image));
@@ -177,8 +176,8 @@ function validateContent(content) {
     const item = content[index];
     if (item.type === "text") {
       textCount += 1;
-      if (!item.text) throw new Error("提示词不能为空，请输入视频内容描述。");
-      if (codePointLength(item.text) > MAX_PROMPT_CODE_POINTS) throw new Error("提示词过长，请缩短至 7000 个字符以内。");
+      if (!item.text) throw new Error("text content must not be empty");
+      if (codePointLength(item.text) > MAX_PROMPT_CODE_POINTS) throw new Error("prompt must not exceed 7000 Unicode characters");
       continue;
     }
     if (item.type === "image_url") {
@@ -186,36 +185,36 @@ function validateContent(content) {
       else if (item.role === "first_frame") firstFrames += 1;
       else if (item.role === "last_frame") lastFrames += 1;
       else if (item.role === "reference_image") referenceImages += 1;
-      else throw new Error("图片用途无效，请设置为首帧、尾帧或参考图片。");
+      else throw new Error("image_url has an unsupported role");
       continue;
     }
     if (item.type === "video_url") {
-      if (item.role !== "reference_video") throw new Error("视频素材仅支持作为参考视频，请将用途设为 reference_video。");
+      if (item.role !== "reference_video") throw new Error("video_url role must be reference_video");
       referenceVideos += 1;
       continue;
     }
     if (item.type === "audio_url") {
-      if (item.role !== "reference_audio") throw new Error("音频素材仅支持作为参考音频，请将用途设为 reference_audio。");
+      if (item.role !== "reference_audio") throw new Error("audio_url role must be reference_audio");
       referenceAudios += 1;
     }
   }
 
-  if (textCount !== 1) throw new Error("请输入一段非空提示词；每次请求只能包含一段提示词。");
+  if (textCount !== 1) throw new Error(MODEL + " requires exactly one non-empty text item");
   if (unroledImages.length) {
     const totalImages = firstFrames + lastFrames + referenceImages + unroledImages.length;
-    if (unroledImages.length !== 1 || totalImages !== 1) throw new Error("多张图片需要指定用途，请标明首帧、尾帧或参考图片。");
+    if (unroledImages.length !== 1 || totalImages !== 1) throw new Error("image_url role may be omitted only when exactly one image is supplied");
     content[unroledImages[0]].role = "first_frame";
     firstFrames += 1;
   }
-  if (firstFrames > 1 || lastFrames > 1) throw new Error("首帧和尾帧各最多 1 张，请删除重复图片。");
-  if (referenceImages > MAX_REFERENCE_IMAGES) throw new Error("参考图片最多 9 张，请减少后提交。");
-  if (referenceVideos > MAX_REFERENCE_VIDEOS) throw new Error("参考视频最多 3 个，请减少后提交。");
-  if (referenceAudios > MAX_REFERENCE_AUDIOS) throw new Error("参考音频最多 3 段，请减少后提交。");
+  if (firstFrames > 1 || lastFrames > 1) throw new Error(MODEL + " accepts at most one first frame and one last frame");
+  if (referenceImages > MAX_REFERENCE_IMAGES) throw new Error(MODEL + " accepts at most 9 reference images");
+  if (referenceVideos > MAX_REFERENCE_VIDEOS) throw new Error(MODEL + " accepts at most 3 reference videos");
+  if (referenceAudios > MAX_REFERENCE_AUDIOS) throw new Error(MODEL + " accepts at most 3 reference audios");
 
   const frameCount = firstFrames + lastFrames;
   const referenceCount = referenceImages + referenceVideos + referenceAudios;
-  if (frameCount && referenceCount) throw new Error("首尾帧不能与参考素材混用，请选择首尾帧模式或参考素材模式。");
-  if (frameCount + referenceCount > MAX_MEDIA_ITEMS) throw new Error("参考素材合计最多 12 个，请减少图片、视频或音频数量。");
+  if (frameCount && referenceCount) throw new Error(MODEL + " cannot mix first/last frames with reference media");
+  if (frameCount + referenceCount > MAX_MEDIA_ITEMS) throw new Error(MODEL + " accepts at most 12 media items in total");
   return content;
 }
 
@@ -224,7 +223,7 @@ function durationFor(req) {
   if (raw === undefined || raw === null || raw === "") return DEFAULT_DURATION;
   const duration = Number(raw);
   if (!Number.isInteger(duration) || duration < MIN_DURATION || duration > MAX_DURATION) {
-    throw new Error("视频时长需为 1 到 15 秒之间的整数，请调整后提交。");
+    throw new Error(MODEL + " duration must be an integer between 1 and 15 seconds");
   }
   return duration;
 }
@@ -233,7 +232,7 @@ function resolutionFor(req) {
   const metadata = req.metadata && typeof req.metadata === "object" && !Array.isArray(req.metadata) ? req.metadata : {};
   const raw = trimmed(metadata.resolution) || trimmed(req.resolution) || trimmed(req.size);
   if (!raw || raw.toUpperCase().includes("768")) return "768P";
-  throw new Error("当前模型仅支持 768P 分辨率，请选择 768P。");
+  throw new Error(MODEL + " resolution is fixed at 768P");
 }
 
 function hasVisual(content) {
@@ -251,8 +250,8 @@ function hasReference(content) {
 function ratioFor(req, content) {
   const metadata = req.metadata && typeof req.metadata === "object" && !Array.isArray(req.metadata) ? req.metadata : {};
   const ratio = trimmed(metadata.ratio) || trimmed(metadata.aspect_ratio) || trimmed(req.ratio) || "16:9";
-  if (!RATIOS.includes(ratio)) throw new Error("当前模型不支持该画幅比例，请选择：" + RATIOS.join("、") + "。");
-  if (ratio === "adaptive" && !hasVisual(content)) throw new Error("自适应比例需要图片或视频，请添加视觉素材，或选择具体画幅比例。");
+  if (!RATIOS.includes(ratio)) throw new Error(MODEL + " ratio must be one of " + RATIOS.join(", "));
+  if (ratio === "adaptive" && !hasVisual(content)) throw new Error(MODEL + " adaptive ratio requires an image or video input");
   return ratio;
 }
 
@@ -291,7 +290,7 @@ function h3(ctx) { return upstreamModelFor(ctx) === MODEL; }
 function genericDuration(req) {
   const value = req.duration !== undefined ? req.duration : req.seconds;
   const n = Number(value);
-  if ((typeof value !== "number" && typeof value !== "string") || !Number.isSafeInteger(n) || n <= 0) throw new Error("请明确填写视频时长，时长必须是正整数秒数。");
+  if ((typeof value !== "number" && typeof value !== "string") || !Number.isSafeInteger(n) || n <= 0) throw new Error("duration must be an explicit positive integer");
   return n;
 }
 
@@ -323,7 +322,7 @@ export function parseSubmitResponse(_ctx, response) {
   const error = apiError(body);
   if (error) throw new Error(error.code + ": " + error.message);
   const taskId = trimmed(body.task_id);
-  if (!taskId) throw new Error("视频服务未返回任务编号，请联系管理员确认是否已受理，勿重复提交。");
+  if (!taskId) throw new Error("DMC response is missing task_id");
   return { taskId: taskId, taskData: body };
 }
 
@@ -347,10 +346,10 @@ export function parseTaskResult(_ctx, body) {
     return { code: error.statusCode, status: "FAILURE", progress: "100%", reason: error.code + ": " + error.message };
   }
   const task = queryTask(body);
-  if (!task) throw new Error("暂未获取到视频任务信息，请稍后查询，无需重新提交生成。");
+  if (!task) throw new Error("DMC query response is missing task");
   const statuses = { queued: "QUEUED", running: "IN_PROGRESS", succeeded: "SUCCESS", failed: "FAILURE", cancelled: "FAILURE" };
   const status = statuses[task.status];
-  if (!status) return { status: "UNKNOWN", reason: "暂时无法识别视频任务状态，请稍后查询，无需重新提交生成。" };
+  if (!status) return { status: "UNKNOWN", reason: "unrecognized DMC task status: " + String(task.status || "") };
   const result = { code: 0, status: status, progress: taskProgress(task, status === "SUCCESS" || status === "FAILURE") };
   if (status === "SUCCESS") {
     const url = trimmed(task.content && task.content.url);
@@ -359,10 +358,8 @@ export function parseTaskResult(_ctx, body) {
   if (status === "FAILURE") {
     const taskError = task.error && typeof task.error === "object" && !Array.isArray(task.error) ? task.error : {};
     const code = trimmed(taskError.code) || "task_" + task.status;
-    const message = trimmed(taskError.message);
-    // Preserve provider details exactly as before; localize only our fallback.
-    const fallback = task.status === "cancelled" ? "视频任务已取消。" : "视频生成失败，服务端未提供具体原因，请联系管理员。";
-    result.reason = message ? code + ": " + message : (trimmed(taskError.code) ? code + ": " : "") + fallback;
+    const message = trimmed(taskError.message) || "DMC task " + task.status;
+    result.reason = code + ": " + message;
   }
   return result;
 }
@@ -377,12 +374,12 @@ export function listArtifacts(task) {
 }
 
 export function buildContentRequest(ctx) {
-  if (ctx.artifactKey !== "video") throw new Error("未找到所请求的视频资源，请检查任务和资源类型。");
+  if (ctx.artifactKey !== "video") throw new Error("artifact_not_found");
   const source = ctx.data && typeof ctx.data === "object" ? ctx.data : {};
   const body = source.data && typeof source.data === "object" ? source.data : source;
   const task = queryTask(body);
   const url = trimmed(task && task.content && task.content.url);
-  if (!url) throw new Error("视频结果暂不可用，请稍后查询任务；若任务已完成仍无法获取，请联系管理员。");
+  if (!url) throw new Error("artifact_not_found");
   return { url: url, method: ctx.clientRequest.method, credentialless: true };
 }
 
@@ -414,7 +411,7 @@ function renderOpenAIVideo(task) {
   };
   if (task.updated_at) output.completed_at = task.updated_at;
   if (task.status === "FAILURE") {
-    output.error = { code: "dmc_task_failed", message: task.fail_reason || "视频生成失败，服务端未提供具体原因，请联系管理员。" };
+    output.error = { code: "dmc_task_failed", message: task.fail_reason || "DMC task failed" };
   }
   return output;
 }
@@ -423,19 +420,19 @@ export const protocols = {
   openai_video: {
     decodeRequest: function (ctx) {
       if (!ctx.body || (ctx.body.kind !== "json" && ctx.body.kind !== "multipart")) {
-        throw new Error("请求格式不正确，请使用 JSON 或 multipart 提交。");
+        throw new Error("JSON or multipart body required");
       }
       let request;
       if (ctx.body.kind === "json") {
-        if (!ctx.body.value || typeof ctx.body.value !== "object" || Array.isArray(ctx.body.value)) throw new Error("请求内容必须是 JSON 对象，请检查提交格式。");
+        if (!ctx.body.value || typeof ctx.body.value !== "object" || Array.isArray(ctx.body.value)) throw new Error("JSON object required");
         request = Object.assign({}, ctx.body.value);
       } else {
-        if ((ctx.body.files || []).length) throw new Error("当前视频服务不支持直接上传文件，请先上传素材并提供可公开访问的 HTTPS 链接。");
+        if ((ctx.body.files || []).length) throw new Error("DMC requires media as public HTTPS URLs; direct multipart files are not supported");
         request = {};
         const fields = ctx.body.fields || {};
         for (const name of Object.keys(fields)) {
           const values = fields[name] || [];
-          if (values.length > 1) throw new Error("参数重复提交：" + name + "，请只保留一个值。");
+          if (values.length > 1) throw new Error(name + " must be provided once");
           request[name] = values[0];
         }
         if (request.metadata !== undefined) {
@@ -443,9 +440,9 @@ export const protocols = {
           try {
             parsed = JSON.parse(request.metadata);
           } catch (_error) {
-            throw new Error("metadata 参数格式不正确，请传入有效的 JSON 对象字符串。");
+            throw new Error("metadata must be a JSON object string");
           }
-          if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("metadata 参数格式不正确，请传入有效的 JSON 对象字符串。");
+          if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("metadata must be a JSON object string");
           request.metadata = parsed;
         }
       }
