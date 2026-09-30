@@ -1,5 +1,6 @@
 const RATIOS = ["16:9", "4:3", "1:1", "3:4", "9:16", "21:9", "adaptive"];
 const RESOLUTIONS = ["480p", "720p", "1080p", "4k"];
+const VIDEO_INPUTS = ["none", "present"];
 const TASK_TYPES = ["auto", "reference", "edit", "extend"];
 const DEFAULT_MAX_DURATION = 30;
 
@@ -47,7 +48,7 @@ export const meta = {
   apiVersion: 1,
   key: "sdgo-video",
   name: "SD-Video",
-  version: "1.0.1",
+  version: "1.0.2",
   author: { name: "88API" },
   description: {
     en: "Seedance video generation through the SDGO OpenAI-compatible task API",
@@ -68,15 +69,23 @@ export const meta = {
       enumLabels: Object.fromEntries(RESOLUTIONS.map((value) => [value, { en: value, zh: value }])),
       description: { en: "Output video resolution", zh: "输出视频分辨率" },
     },
+    video_input: {
+      enum: VIDEO_INPUTS,
+      enumLabels: {
+        none: { en: "No reference video", zh: "无参考视频" },
+        present: { en: "With reference video", zh: "有参考视频" },
+      },
+      description: { en: "Reference video pricing variant", zh: "参考视频计费档位" },
+    },
     upstreamUnits: {
       type: "number",
       unit: "token",
-      description: { en: "Completed Ark output token unit price", zh: "Ark 完成任务输出 Token 单价" },
+      description: { en: "Completed output token unit price", zh: "完成任务输出 Token 单价" },
     },
   },
   usageExamples: [
-    { label: "5s · 720p", facts: { seconds: 5, resolution: "720p", upstreamUnits: 216900 } },
-    { label: "10s · 1080p", facts: { seconds: 10, resolution: "1080p", upstreamUnits: 216900 } },
+    { label: "5s · 720p · 无参考视频", facts: { seconds: 5, resolution: "720p", video_input: "none", upstreamUnits: 216900 } },
+    { label: "10s · 1080p · 有参考视频", facts: { seconds: 10, resolution: "1080p", video_input: "present", upstreamUnits: 216900 } },
   ],
 };
 
@@ -494,12 +503,16 @@ function resultURL(body) {
   return text(object(body.content).video_url);
 }
 
-export function parseSubmitResponse(_ctx, response) {
+export function parseSubmitResponse(ctx, response) {
   const body = taskBody(response.body);
   if (["failed", "cancelled", "expired"].includes(text(body.status).toLowerCase())) throw new Error(errorMessage(body));
   const id = first(body.id, body.task_id);
   if (!id) throw new Error("暂未获取到任务编号，无法确认提交结果，请联系管理员核查，勿重复提交。");
-  return { taskId: id, taskData: response.body };
+  return {
+    taskId: id,
+    taskData: response.body,
+    state: { video_input: videoInputFor(ctx.requestBody) },
+  };
 }
 
 export function buildQueryRequest(ctx) {
@@ -548,15 +561,32 @@ function resolutionFrom(value) {
   return RESOLUTIONS.includes(resolution.toLowerCase()) ? resolution.toLowerCase() : "";
 }
 
+function videoInputFor(value) {
+  const request = object(value);
+  if (asArray(request.videos).length > 0 || asArray(request.video_urls).length > 0) return "present";
+  const content = Array.isArray(request.content) ? request.content : [];
+  return content.some((item) => object(item).type === "video_url" || object(item).video_url) ? "present" : "none";
+}
+
+function videoInputFromState(value) {
+  const state = object(value);
+  const stateValue = text(state.video_input).toLowerCase();
+  return VIDEO_INPUTS.includes(stateValue) ? stateValue : "";
+}
+
 export function extractUsage(ctx) {
   const request = object(ctx.requestBody);
   const model = first(ctx.upstreamModel, ctx.model, request.model);
   const cfg = modelConfig(model);
   const resolution = resolutionFrom(request) || cfg.defaultResolution;
-  return { seconds: secondsFor(Object.assign({ model }, request)), resolution };
+  return {
+    seconds: secondsFor(Object.assign({ model }, request)),
+    resolution,
+    video_input: videoInputFor(request),
+  };
 }
 
-export function extractUsageOnComplete(_task, _taskResult, body) {
+export function extractUsageOnComplete(task, _taskResult, body) {
   const value = taskBody(body);
   if (text(value.status).toLowerCase() !== "succeeded") return {};
   const facts = {};
@@ -564,6 +594,8 @@ export function extractUsageOnComplete(_task, _taskResult, body) {
   if (Number.isInteger(duration) && duration > 0) facts.seconds = duration;
   const resolution = resolutionFrom(value);
   if (resolution) facts.resolution = resolution;
+  const videoInput = videoInputFromState(task.state) || text(value.video_input).toLowerCase();
+  if (VIDEO_INPUTS.includes(videoInput)) facts.video_input = videoInput;
   const usage = object(value.usage);
   const completionTokens = Number(usage.completion_tokens || 0);
   if (Number.isFinite(completionTokens) && completionTokens > 0) facts.upstreamUnits = completionTokens;

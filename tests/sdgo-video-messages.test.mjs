@@ -17,9 +17,10 @@ function decode(value = {}, model = 'doubao-seedance-2-5-260628') {
 test('declares the SDGO dynamic plugin and official models remain discoverable', () => {
   assert.equal(plugin.meta.key, 'sdgo-video')
   assert.equal(plugin.meta.name, 'SD-Video')
-  assert.equal(plugin.meta.version, '1.0.1')
+  assert.equal(plugin.meta.version, '1.0.2')
   assert.equal(plugin.meta.dynamicModels, true)
   assert.deepEqual(plugin.meta.usageSchema.resolution.enum, ['480p', '720p', '1080p', '4k'])
+  assert.deepEqual(plugin.meta.usageSchema.video_input.enum, ['none', 'present'])
   assert.equal(plugin.meta.usageSchema.upstreamUnits.unit, 'token')
 })
 
@@ -78,11 +79,15 @@ test('preserves official content items and accepts a base URL with /api/v3', () 
 })
 
 test('builds the documented task query and preserves gateway/Ark IDs', () => {
-  assert.deepEqual(plugin.parseSubmitResponse({}, {
+  const submitResponse = plugin.parseSubmitResponse({
+    requestBody: { content: [{ type: 'text', text: 'Fixture prompt' }, { type: 'video_url', video_url: { url: video } }] },
+  }, {
     body: { id: 'task_fixture', status: 'queued', model: 'doubao-seedance-2-5-260628' },
-  }), {
+  })
+  assert.deepEqual(submitResponse, {
     taskId: 'task_fixture',
     taskData: { id: 'task_fixture', status: 'queued', model: 'doubao-seedance-2-5-260628' },
+    state: { video_input: 'present' },
   })
   const query = plugin.buildQueryRequest({
     baseUrl: 'https://sdgo.top/api/v3',
@@ -102,13 +107,31 @@ test('builds the documented task query and preserves gateway/Ark IDs', () => {
   assert.equal(success.url, 'https://example.invalid/result.mp4')
   assert.equal(success.completionTokens, 216900)
   assert.equal(success.totalTokens, 216900)
-  assert.deepEqual(plugin.extractUsageOnComplete({}, success, {
+  assert.deepEqual(plugin.extractUsageOnComplete({ state: { video_input: 'present' } }, success, {
     id: 'cgt-fixture',
     status: 'succeeded',
     duration: 10,
     resolution: '1080p',
     usage: { completion_tokens: 216900 },
-  }), { seconds: 10, resolution: '1080p', upstreamUnits: 216900 })
+  }), { seconds: 10, resolution: '1080p', video_input: 'present', upstreamUnits: 216900 })
+})
+
+test('extracts reference-video pricing from normalized Ark content', () => {
+  const decoded = decode({ duration: 8, content: [
+    { type: 'text', text: 'Fixture prompt' },
+    { type: 'video_url', role: 'reference_video', video_url: { url: video } },
+  ] })
+  assert.deepEqual(plugin.extractUsage({ requestBody: decoded.requestBody }), {
+    seconds: 8,
+    resolution: '720p',
+    video_input: 'present',
+  })
+  const textOnly = decode({ duration: 8 })
+  assert.deepEqual(plugin.extractUsage({ requestBody: textOnly.requestBody }), {
+    seconds: 8,
+    resolution: '720p',
+    video_input: 'none',
+  })
 })
 
 test('enforces SDGO documented model and media limits', () => {

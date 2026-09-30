@@ -18,7 +18,7 @@ func TestIndependentPluginCatalogueSDGOVideoContract(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "sdgo-video", plugin.Meta.Key)
 	assert.Equal(t, "SD-Video", plugin.Meta.Name)
-	assert.Equal(t, "1.0.1", plugin.Meta.Version)
+	assert.Equal(t, "1.0.2", plugin.Meta.Version)
 	assert.True(t, plugin.Meta.DynamicModels)
 	assert.Empty(t, plugin.Meta.Models)
 
@@ -27,7 +27,9 @@ func TestIndependentPluginCatalogueSDGOVideoContract(t *testing.T) {
 			"model": "doubao-seedance-2-5-260628",
 			"body": map[string]any{"kind": "json", "value": map[string]any{
 				"prompt": "Fixture", "duration": -1, "ratio": "adaptive",
-				"resolution": "720p", "images": []any{"https://example.invalid/image.png"},
+				"resolution": "720p",
+				"images": []any{"https://example.invalid/image.png"},
+				"videos": []any{"https://example.invalid/video.mp4"},
 			}},
 		})
 	require.NoError(t, err)
@@ -48,6 +50,13 @@ func TestIndependentPluginCatalogueSDGOVideoContract(t *testing.T) {
 	request := value.(map[string]any)
 	assert.Equal(t, "https://sdgo.top/api/v3/contents/generations/tasks", request["url"])
 	assert.Equal(t, "Bearer fixture", request["headers"].(map[string]any)["Authorization"])
+
+	submitResult, err := plugin.Engine.Call(context.Background(), "parseSubmitResponse",
+		map[string]any{"requestBody": requestBody},
+		map[string]any{"body": map[string]any{"id": "task-fixture", "status": "queued"}},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, "present", submitResult.(map[string]any)["state"].(map[string]any)["video_input"])
 
 	result, err := plugin.Engine.Call(context.Background(), "parseTaskResult",
 		map[string]any{}, map[string]any{
