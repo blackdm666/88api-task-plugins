@@ -3,6 +3,28 @@
   "name": "88API Task Plugins",
   "plugins": [
     {
+      "key": "gx-video",
+      "name": "GX-Video",
+      "description": {
+        "en": "Seedance native video generation through the GX task API",
+        "zh": "通过 GX 任务接口接入 Seedance 原生视频生成"
+      },
+      "models": [],
+      "protocols": [
+        "openai_video"
+      ],
+      "latest": "1.0.1",
+      "versions": [
+        {
+          "version": "1.0.1",
+          "path": "plugins/gx-video/1.0.1/plugin.js",
+          "sha256": "32a7411480b5b9327c797ea5b5d3fa0a0179d1489d6c2b20ff96bd005a5b0aa6",
+          "minApiVersion": 1,
+          "kind": "task"
+        }
+      ]
+    },
+    {
       "key": "minimax-h3",
       "name": "Minimax-H3",
       "description": {
@@ -13,8 +35,15 @@
       "protocols": [
         "openai_video"
       ],
-      "latest": "2.0.0",
+      "latest": "2.0.1",
       "versions": [
+        {
+          "version": "2.0.1",
+          "path": "plugins/minimax-h3/2.0.1/plugin.js",
+          "sha256": "d80f473dad0ab6c41cc8a47d146726454224531c91750a4c4ef58d96a287fb8e",
+          "minApiVersion": 1,
+          "kind": "task"
+        },
         {
           "version": "2.0.0",
           "path": "plugins/minimax-h3/2.0.0/plugin.js",
