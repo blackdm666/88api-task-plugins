@@ -19,6 +19,7 @@ func TestIndependentPluginCatalogueGXVideoContract(t *testing.T) {
 	assert.Equal(t, "gx-video", plugin.Meta.Key)
 	assert.True(t, plugin.Meta.DynamicModels)
 	assert.Empty(t, plugin.Meta.Models)
+	assert.Equal(t, "token", plugin.Meta.UsageSchema["upstreamUnits"].Unit)
 
 	decoded, err := plugin.Engine.CallPath(context.Background(), "protocols",
 		[]string{"openai_video", "decodeRequest"}, map[string]any{
@@ -58,4 +59,22 @@ func TestIndependentPluginCatalogueGXVideoContract(t *testing.T) {
 	assert.Equal(t, "SUCCESS", parsed["status"])
 	assert.Equal(t, "https://example.invalid/video.mp4", parsed["url"])
 	assert.EqualValues(t, 100, parsed["completionTokens"])
+
+	usage, err := plugin.Engine.Call(context.Background(), "extractUsage", map[string]any{
+		"requestBody": map[string]any{
+			"duration": 8, "resolution": "4k",
+			"videos": []any{"https://example.invalid/video.mp4"},
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "present", usage.(map[string]any)["video_input"])
+	assert.Equal(t, "4k", usage.(map[string]any)["resolution"])
+
+	completionUsage, err := plugin.Engine.Call(context.Background(), "extractUsageOnComplete",
+		map[string]any{}, map[string]any{}, map[string]any{
+			"status": "succeeded",
+			"usage": map[string]any{"completion_tokens": 321000},
+		})
+	require.NoError(t, err)
+	assert.EqualValues(t, 321000, completionUsage.(map[string]any)["upstreamUnits"])
 }

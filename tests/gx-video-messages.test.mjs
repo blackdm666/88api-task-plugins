@@ -16,7 +16,9 @@ function decode(value = {}, model = 'artsdance-2-5-pro-260801') {
 test('declares GX dynamic models and normalized usage dimensions', () => {
   assert.equal(plugin.meta.key, 'gx-video')
   assert.equal(plugin.meta.dynamicModels, true)
-  assert.deepEqual(plugin.meta.usageSchema.resolution.enum, ['480p', '720p', '1080p'])
+  assert.deepEqual(plugin.meta.usageSchema.resolution.enum, ['480p', '720p', '1080p', '4k'])
+  assert.deepEqual(plugin.meta.usageSchema.video_input.enum, ['none', 'present'])
+  assert.equal(plugin.meta.usageSchema.upstreamUnits.unit, 'token')
   assert.equal(plugin.meta.usageExamples[0].facts.seconds, 5)
 })
 
@@ -47,6 +49,19 @@ test('normalizes XM-style inputs into the GX native request', () => {
   assert.equal(decoded.requestBody.images.length, 3)
   assert.equal(decoded.requestBody.videos[0].role, 'reference_video')
   assert.equal(decoded.requestBody.audios[0].role, 'reference_audio')
+})
+
+test('extracts the token billing vector and reference-video variant', () => {
+  const decoded = decode({ duration: 8, resolution: '4k', videos: [video] })
+  assert.deepEqual(plugin.extractUsage({ requestBody: decoded.requestBody }), {
+    seconds: 8,
+    resolution: '4k',
+    video_input: 'present',
+  })
+  assert.deepEqual(plugin.extractUsageOnComplete({}, {}, {
+    status: 'succeeded',
+    usage: { completion_tokens: 321000 },
+  }), { upstreamUnits: 321000 })
 })
 
 test('builds the documented GX submit and query requests', () => {
@@ -89,7 +104,9 @@ test('preserves provider task evidence and token fields', () => {
     status: 'succeeded',
     duration: 10,
     resolution: '720p',
-  }), { seconds: 10, resolution: '720p' })
+    video_input: 'none',
+    usage: { completion_tokens: 189347 },
+  }), { seconds: 10, resolution: '720p', video_input: 'none', upstreamUnits: 189347 })
 
   assert.deepEqual(plugin.parseTaskResult({}, { status: 'queued' }).status, 'QUEUED')
   assert.deepEqual(plugin.parseTaskResult({}, { status: 'running', progress: 100 }).progress, '99%')

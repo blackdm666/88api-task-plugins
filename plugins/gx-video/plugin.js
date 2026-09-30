@@ -1,5 +1,6 @@
 const RATIOS = ["21:9", "16:9", "4:3", "1:1", "3:4", "9:16", "adaptive"];
-const RESOLUTIONS = ["480p", "720p", "1080p"];
+const RESOLUTIONS = ["480p", "720p", "1080p", "4k"];
+const VIDEO_INPUTS = ["none", "present"];
 const TASK_TYPES = ["auto", "edit", "extend"];
 const MAX_IMAGES = 30;
 const MAX_VIDEOS = 10;
@@ -11,7 +12,7 @@ export const meta = {
   apiVersion: 1,
   key: "gx-video",
   name: "GX-Video",
-  version: "1.0.0",
+  version: "1.0.1",
   author: { name: "88API" },
   description: {
     en: "Seedance native video generation through the GX task API",
@@ -36,14 +37,27 @@ export const meta = {
         "480p": { en: "480p", zh: "480p" },
         "720p": { en: "720p", zh: "720p" },
         "1080p": { en: "1080p", zh: "1080p" },
+        "4k": { en: "4K", zh: "4K" },
       },
       description: { en: "Output video resolution", zh: "输出视频分辨率" },
     },
+    video_input: {
+      enum: VIDEO_INPUTS,
+      enumLabels: {
+        none: { en: "No reference video", zh: "无参考视频" },
+        present: { en: "With reference video", zh: "有参考视频" },
+      },
+      description: { en: "Reference video pricing variant", zh: "参考视频计费档位" },
+    },
+    upstreamUnits: {
+      type: "number",
+      unit: "token",
+      description: { en: "Completed GX output tokens", zh: "GX 完成任务返回的输出 Token" },
+    },
   },
   usageExamples: [
-    { label: "5s · 720p", facts: { seconds: 5, resolution: "720p" } },
-    { label: "10s · 1080p", facts: { seconds: 10, resolution: "1080p" } },
-    { label: "智能时长 · 720p", facts: { seconds: MAX_DURATION, resolution: "720p" } },
+    { label: "5s · 720p · 无参考视频", facts: { seconds: 5, resolution: "720p", video_input: "none", upstreamUnits: 500000 } },
+    { label: "10s · 1080p · 有参考视频", facts: { seconds: 10, resolution: "1080p", video_input: "present", upstreamUnits: 500000 } },
   ],
 };
 
@@ -145,6 +159,10 @@ function resolutionFor(value) {
     throw new Error("当前模型不支持该分辨率，请选择：" + RESOLUTIONS.join("、") + "。");
   }
   return resolution;
+}
+
+function videoInputFor(request) {
+  return asArray(object(request).videos).length > 0 ? "present" : "none";
 }
 
 function booleanFor(value, field) {
@@ -441,7 +459,11 @@ function resolutionFrom(value) {
 
 export function extractUsage(ctx) {
   const request = object(ctx.requestBody);
-  return { seconds: secondsFor(request), resolution: resolutionFrom(request) || resolutionFor(request.resolution) };
+  return {
+    seconds: secondsFor(request),
+    resolution: resolutionFrom(request) || resolutionFor(request.resolution),
+    video_input: videoInputFor(request),
+  };
 }
 
 export function extractUsageOnComplete(_task, _taskResult, body) {
@@ -452,6 +474,11 @@ export function extractUsageOnComplete(_task, _taskResult, body) {
   if (Number.isInteger(duration) && duration >= 4 && duration <= MAX_DURATION) facts.seconds = duration;
   const resolution = resolutionFrom(value);
   if (resolution) facts.resolution = resolution;
+  const videoInput = text(value.video_input).toLowerCase();
+  if (VIDEO_INPUTS.includes(videoInput)) facts.video_input = videoInput;
+  const usage = object(value.usage);
+  const completionTokens = Number(usage.completion_tokens || 0);
+  if (Number.isFinite(completionTokens) && completionTokens > 0) facts.upstreamUnits = completionTokens;
   return facts;
 }
 
