@@ -17,7 +17,7 @@ function decode(value = {}, model = 'doubao-seedance-2-5-260628') {
 test('declares the SDGO dynamic plugin and official models remain discoverable', () => {
   assert.equal(plugin.meta.key, 'sdgo-video')
   assert.equal(plugin.meta.name, 'SD-Video')
-  assert.equal(plugin.meta.version, '1.0.3')
+  assert.equal(plugin.meta.version, '1.0.4')
   assert.equal(plugin.meta.dynamicModels, true)
   assert.deepEqual(plugin.meta.usageSchema.resolution.enum, ['480p', '720p', '1080p', '4k'])
   assert.deepEqual(plugin.meta.usageSchema.video_input.enum, ['none', 'present'])
@@ -114,6 +114,19 @@ test('builds the documented task query and preserves gateway/Ark IDs', () => {
     resolution: '1080p',
     usage: { completion_tokens: 216900 },
   }), { seconds: 10, resolution: '1080p', video_input: 'present', upstreamUnits: 216900 })
+})
+
+test('turns permanent provider query errors into terminal failures', () => {
+  const result = plugin.parseTaskResult(
+    {},
+    { error: { code: 'InvalidParameter', message: 'input image is too small' } },
+    { status: 400 },
+  )
+  assert.deepEqual(result, {
+    status: 'FAILURE',
+    progress: '100%',
+    reason: 'input image is too small',
+  })
 })
 
 test('extracts reference-video pricing from normalized Ark content', () => {

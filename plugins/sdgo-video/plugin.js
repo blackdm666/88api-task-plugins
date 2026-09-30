@@ -48,7 +48,7 @@ export const meta = {
   apiVersion: 1,
   key: "sdgo-video",
   name: "SD-Video",
-  version: "1.0.3",
+  version: "1.0.4",
   author: { name: "88API" },
   description: {
     en: "Seedance video generation through the SDGO OpenAI-compatible task API",
@@ -494,7 +494,9 @@ export function buildSubmitRequest(ctx) {
 
 function taskBody(value) {
   const body = object(value);
-  return body.status !== undefined || body.id || body.task_id ? body : object(body.data);
+  return body.status !== undefined || body.id || body.task_id || body.error || body.message
+    ? body
+    : object(body.data);
 }
 
 function errorMessage(body) {
@@ -532,8 +534,12 @@ function progressFor(body, terminal) {
   return Number.isFinite(progress) ? Math.max(0, Math.min(99, Math.floor(progress))) + "%" : "0%";
 }
 
-export function parseTaskResult(_ctx, value) {
+export function parseTaskResult(_ctx, value, response) {
   const body = taskBody(value);
+  const httpStatus = Number(object(response).status);
+  if (httpStatus >= 400 && httpStatus < 500) {
+    return { status: "FAILURE", progress: "100%", reason: errorMessage(body) };
+  }
   const status = text(body.status).toLowerCase();
   if (["queued", "pending", "submitted"].includes(status)) return { status: "QUEUED", progress: progressFor(body, false) };
   if (["running", "processing", "in_progress"].includes(status)) return { status: "IN_PROGRESS", progress: progressFor(body, false) };
