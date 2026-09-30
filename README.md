@@ -7,6 +7,7 @@
 | GX-Video | `gx-video` | `1.0.0` |
 | Minimax-H3 | `minimax-h3` | `2.0.0` |
 | Minimax-H3 Async | `minimax-h3-async` | `1.0.0` |
+| SD-Video | `sdgo-video` | `1.0.1` |
 | XM-Video | `xm-video` | `3.0.0` |
 
 Minimax-H3 与 XM-Video 的初始独立版本与当时88API镜像和生产自定义插件源码一致，仅迁移维护及发布位置；Minimax-H3 Async 是另行新增的插件。
@@ -41,6 +42,23 @@ plugin or require a NewAPI image rebuild.
 不从进度或未文档化字段猜测用量。模型列表手动维护，不代表上游实时发现。
 鉴权密钥只使用渠道配置，不写入插件。`Idempotency-Key` 仅作提示，
 上游没有承诺幂等，超时后不得盲目重新生成。
+
+## SD-Video
+
+`sdgo-video` is the independent task-plugin adapter for the SDGO
+Seedance-compatible API documented at `https://sdgo.top/docs`. Configure the
+channel base URL as either `https://sdgo.top` or `https://sdgo.top/api/v3`;
+the plugin normalizes both forms to the official endpoint
+`/api/v3/contents/generations/tasks`.
+
+The adapter keeps XM-style request normalization but emits Ark-native
+`content` items (`text`, `image_url`, `video_url`, and `audio_url`). It
+supports the documented Seedance 2.5/2.0/1.5/1.0 model limits, gateway
+`task_...` IDs, subsequent Ark `cgt-*` IDs, `content.video_url` results,
+provider errors, completion token evidence, and completion usage facts.
+Media supplied to the official endpoint must be reachable by both SDGO and
+the upstream Ark service. The plugin does not put API keys or channel
+configuration in this repository.
 
 ## 私有仓库的安装与更新
 

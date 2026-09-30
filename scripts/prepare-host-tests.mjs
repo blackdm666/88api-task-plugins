@@ -28,6 +28,8 @@ await copyFile(path.join(root, 'tests', 'host', 'minimax_h3_async_test.go'),
   path.join(host, 'pkg', 'jsplugin', 'independent_minimax_h3_async_test.go'))
 await copyFile(path.join(root, 'tests', 'host', 'gx_video_contract_test.go'),
   path.join(host, 'pkg', 'jsplugin', 'independent_gx_video_contract_test.go'))
+await copyFile(path.join(root, 'tests', 'host', 'sdgo_video_contract_test.go'),
+  path.join(host, 'pkg', 'jsplugin', 'independent_sdgo_video_contract_test.go'))
 // The pinned host's historical XinMeng test asserted an internal English
 // error string. The plugin now exposes Chinese guidance to canvas users, so
 // align that sandbox-only assertion with the intentional public message.
