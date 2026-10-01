@@ -48,7 +48,7 @@ export const meta = {
   apiVersion: 1,
   key: "sdgo-video",
   name: "SD-Video",
-  version: "1.0.4",
+  version: "1.0.5",
   author: { name: "88API" },
   description: {
     en: "Seedance video generation through the SDGO OpenAI-compatible task API",
@@ -597,7 +597,7 @@ export function extractUsage(ctx) {
 
 export function extractUsageOnComplete(task, _taskResult, body) {
   const value = taskBody(body);
-  if (text(value.status).toLowerCase() !== "succeeded") return {};
+  if (!["succeeded", "completed", "success", "done"].includes(text(value.status).toLowerCase())) return {};
   const facts = {};
   const duration = Number(value.duration);
   if (Number.isInteger(duration) && duration > 0) facts.seconds = duration;
