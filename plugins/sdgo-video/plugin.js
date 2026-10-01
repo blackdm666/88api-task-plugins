@@ -3,6 +3,12 @@ const RESOLUTIONS = ["480p", "720p", "1080p", "4k"];
 const VIDEO_INPUTS = ["none", "present"];
 const TASK_TYPES = ["auto", "reference", "edit", "extend"];
 const DEFAULT_MAX_DURATION = 30;
+const CATALOG_MODELS = [
+  "doubao-seedance-2-0-mini-260615",
+  "doubao-seedance-2-0-260128",
+  "doubao-seedance-2-0-fast-260128",
+  "doubao-seedance-2-5-260628",
+];
 
 const MODEL_CONFIGS = {
   "doubao-seedance-2-0-mini-260615": {
@@ -44,29 +50,16 @@ const MODEL_CONFIGS = {
   },
 };
 
-export const meta = {
-  apiVersion: 1,
-  key: "sdgo-video",
-  name: "SD-Video",
-  version: "1.0.5",
-  author: { name: "88API" },
-  description: {
-    en: "Seedance video generation through the SDGO OpenAI-compatible task API",
-    zh: "通过 SDGO OpenAI 兼容任务接口接入 Seedance 视频生成",
-  },
-  models: [],
-  dynamicModels: true,
-  fetchMode: "per_task",
-  protocols: ["openai_video"],
-  usageSchema: {
+function usageSchema(resolutions) {
+  return {
     seconds: {
       type: "number",
       unit: "second",
       description: { en: "Video generation unit price", zh: "视频生成单价" },
     },
     resolution: {
-      enum: RESOLUTIONS,
-      enumLabels: Object.fromEntries(RESOLUTIONS.map((value) => [value, { en: value, zh: value }])),
+      enum: resolutions,
+      enumLabels: Object.fromEntries(resolutions.map((value) => [value, { en: value, zh: value }])),
       description: { en: "Output video resolution", zh: "输出视频分辨率" },
     },
     video_input: {
@@ -82,10 +75,56 @@ export const meta = {
       unit: "token",
       description: { en: "Completed output token unit price", zh: "完成任务输出 Token 单价" },
     },
+  };
+}
+
+function usageExamples(resolutions) {
+  const secondResolution = resolutions[Math.min(1, resolutions.length - 1)];
+  const lastResolution = resolutions[resolutions.length - 1];
+  return [
+    {
+      label: `5s · ${secondResolution} · 无参考视频`,
+      facts: { seconds: 5, resolution: secondResolution, video_input: "none", upstreamUnits: 216900 },
+    },
+    {
+      label: `10s · ${lastResolution} · 有参考视频`,
+      facts: { seconds: 10, resolution: lastResolution, video_input: "present", upstreamUnits: 216900 },
+    },
+  ];
+}
+
+export const meta = {
+  apiVersion: 1,
+  key: "sdgo-video",
+  name: "SD-Video",
+  version: "1.0.6",
+  author: { name: "88API" },
+  description: {
+    en: "Seedance video generation through the SDGO OpenAI-compatible task API",
+    zh: "通过 SDGO OpenAI 兼容任务接口接入 Seedance 视频生成",
   },
-  usageExamples: [
-    { label: "5s · 720p · 无参考视频", facts: { seconds: 5, resolution: "720p", video_input: "none", upstreamUnits: 216900 } },
-    { label: "10s · 1080p · 有参考视频", facts: { seconds: 10, resolution: "1080p", video_input: "present", upstreamUnits: 216900 } },
+  models: CATALOG_MODELS,
+  dynamicModels: true,
+  fetchMode: "per_task",
+  protocols: ["openai_video"],
+  usageSchema: usageSchema(RESOLUTIONS),
+  usageExamples: usageExamples(RESOLUTIONS),
+  usageProfiles: [
+    {
+      models: ["doubao-seedance-2-0-mini-260615", "doubao-seedance-2-0-fast-260128"],
+      schema: usageSchema(["480p", "720p"]),
+      examples: usageExamples(["480p", "720p"]),
+    },
+    {
+      models: ["doubao-seedance-2-0-260128"],
+      schema: usageSchema(["480p", "720p", "1080p", "4k"]),
+      examples: usageExamples(["480p", "720p", "1080p", "4k"]),
+    },
+    {
+      models: ["doubao-seedance-2-5-260628"],
+      schema: usageSchema(["480p", "720p", "1080p"]),
+      examples: usageExamples(["480p", "720p", "1080p"]),
+    },
   ],
 };
 

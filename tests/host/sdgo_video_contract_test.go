@@ -18,9 +18,15 @@ func TestIndependentPluginCatalogueSDGOVideoContract(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "sdgo-video", plugin.Meta.Key)
 	assert.Equal(t, "SD-Video", plugin.Meta.Name)
-	assert.Equal(t, "1.0.5", plugin.Meta.Version)
+	assert.Equal(t, "1.0.6", plugin.Meta.Version)
 	assert.True(t, plugin.Meta.DynamicModels)
-	assert.Empty(t, plugin.Meta.Models)
+	assert.Equal(t, []string{
+		"doubao-seedance-2-0-mini-260615",
+		"doubao-seedance-2-0-260128",
+		"doubao-seedance-2-0-fast-260128",
+		"doubao-seedance-2-5-260628",
+	}, plugin.Meta.Models)
+	require.Len(t, plugin.Meta.UsageProfiles, 3)
 
 	decoded, err := plugin.Engine.CallPath(context.Background(), "protocols",
 		[]string{"openai_video", "decodeRequest"}, map[string]any{

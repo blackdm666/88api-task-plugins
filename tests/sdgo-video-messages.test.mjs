@@ -17,11 +17,20 @@ function decode(value = {}, model = 'doubao-seedance-2-5-260628') {
 test('declares the SDGO dynamic plugin and official models remain discoverable', () => {
   assert.equal(plugin.meta.key, 'sdgo-video')
   assert.equal(plugin.meta.name, 'SD-Video')
-  assert.equal(plugin.meta.version, '1.0.5')
+  assert.equal(plugin.meta.version, '1.0.6')
   assert.equal(plugin.meta.dynamicModels, true)
+  assert.deepEqual(plugin.meta.models, [
+    'doubao-seedance-2-0-mini-260615',
+    'doubao-seedance-2-0-260128',
+    'doubao-seedance-2-0-fast-260128',
+    'doubao-seedance-2-5-260628',
+  ])
   assert.deepEqual(plugin.meta.usageSchema.resolution.enum, ['480p', '720p', '1080p', '4k'])
   assert.deepEqual(plugin.meta.usageSchema.video_input.enum, ['none', 'present'])
   assert.equal(plugin.meta.usageSchema.upstreamUnits.unit, 'token')
+  assert.deepEqual(plugin.meta.usageProfiles[0].schema.resolution.enum, ['480p', '720p'])
+  assert.deepEqual(plugin.meta.usageProfiles[1].schema.resolution.enum, ['480p', '720p', '1080p', '4k'])
+  assert.deepEqual(plugin.meta.usageProfiles[2].schema.resolution.enum, ['480p', '720p', '1080p'])
 })
 
 test('normalizes XM-style fields into Ark content items', () => {
