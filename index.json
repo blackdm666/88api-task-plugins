@@ -82,12 +82,24 @@
         "en": "Seedance video generation through the SDGO OpenAI-compatible task API",
         "zh": "通过 SDGO OpenAI 兼容任务接口接入 Seedance 视频生成"
       },
-      "models": [],
+      "models": [
+        "doubao-seedance-2-0-mini-260615",
+        "doubao-seedance-2-0-260128",
+        "doubao-seedance-2-0-fast-260128",
+        "doubao-seedance-2-5-260628"
+      ],
       "protocols": [
         "openai_video"
       ],
-      "latest": "1.0.5",
+      "latest": "1.0.6",
       "versions": [
+        {
+          "version": "1.0.6",
+          "path": "plugins/sdgo-video/1.0.6/plugin.js",
+          "sha256": "237ae4d576a27a259ab2b083bd5bd5012d55902f5d801ff70e530db20ac65d8a",
+          "minApiVersion": 1,
+          "kind": "task"
+        },
         {
           "version": "1.0.5",
           "path": "plugins/sdgo-video/1.0.5/plugin.js",
