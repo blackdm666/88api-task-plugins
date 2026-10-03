@@ -97,7 +97,7 @@ export const meta = {
   apiVersion: 1,
   key: "sdgo-video",
   name: "SD-Video",
-  version: "1.0.6",
+  version: "1.0.7",
   author: { name: "88API" },
   description: {
     en: "Seedance video generation through the SDGO OpenAI-compatible task API",
@@ -192,14 +192,24 @@ function urlFor(value, field, kind) {
   if (typeof value === "string") {
     url = value.trim();
   } else if (value && typeof value === "object" && !Array.isArray(value)) {
-    url = text(value.url);
-    role = text(value.role);
+    if (typeof value.__fileRef === "string") {
+      url = value;
+    } else {
+      url = typeof value.url === "object" && value.url !== null
+        ? value.url
+        : text(value.url);
+      role = text(value.role);
+    }
   }
+  const providerAsset = typeof url === "string" && /^asset:\/\//i.test(url);
+  const providerUpload = typeof url === "string" && /^tos:\/\//i.test(url);
+  const filePlaceholder = url && typeof url === "object" && !Array.isArray(url) &&
+    typeof url.__fileRef === "string" && ["base64", "dataUrl"].includes(url.encoding);
   const allowed = kind === "video"
-    ? /^https:\/\//i.test(url) || /^asset:\/\//i.test(url)
-    : /^https:\/\//i.test(url) || /^asset:\/\//i.test(url) || /^data:/i.test(url);
+    ? /^https:\/\//i.test(url) || providerAsset || providerUpload
+    : /^https:\/\//i.test(url) || providerAsset || providerUpload || /^data:/i.test(url) || filePlaceholder;
   if (!url || !allowed) {
-    throw new Error(field + "必须是可被网关和上游访问的 HTTPS、asset:// 或受支持的内联数据地址。");
+    throw new Error(field + "必须是可被网关和上游访问的 HTTPS、asset://、tos:// 或受支持的内联数据地址。");
   }
   return { url, role };
 }
@@ -490,7 +500,20 @@ function parseMultipart(ctx) {
       throw new Error("参数“" + key + "”格式不正确，请提供有效的 JSON。");
     }
   }
-  if ((ctx.body.files || []).length) throw new Error("SDGO 官方 /api/v3 接口要求使用 URL 或 asset:// 素材，不支持直接上传文件。");
+  const files = ctx.body.files || [];
+  if (files.length) {
+    if (files.length !== 1 || !/^image\//i.test(text(files[0].mimeType))) {
+      throw new Error("SDGO 仅可将一个本地图片文件内联为图片素材；本地视频请先上传到 SDGO，再提交 tos:// 或 asset:// 地址。");
+    }
+    if (req.images || req.image || req.image_urls || req.content) {
+      throw new Error("本地图片文件不能与图片或 content 参数同时使用，请只保留一种方式。");
+    }
+    req.images = [{
+      __fileRef: files[0].ref,
+      encoding: "dataUrl",
+      mimeType: files[0].mimeType,
+    }];
+  }
   return req;
 }
 

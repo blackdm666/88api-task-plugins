@@ -17,7 +17,7 @@ function decode(value = {}, model = 'doubao-seedance-2-5-260628') {
 test('declares the SDGO dynamic plugin and official models remain discoverable', () => {
   assert.equal(plugin.meta.key, 'sdgo-video')
   assert.equal(plugin.meta.name, 'SD-Video')
-  assert.equal(plugin.meta.version, '1.0.6')
+  assert.equal(plugin.meta.version, '1.0.7')
   assert.equal(plugin.meta.dynamicModels, true)
   assert.deepEqual(plugin.meta.models, [
     'doubao-seedance-2-0-mini-260615',
@@ -85,6 +85,78 @@ test('preserves official content items and accepts a base URL with /api/v3', () 
   assert.equal(submit.headers.Authorization, 'Bearer fixture')
   assert.equal(submit.body.content[1].role, 'first_frame')
   assert.equal(submit.body.resolution, '4k')
+})
+
+test('connects SDGO image/video asset modes and presigned tos sources', () => {
+  const imageAsset = decode({
+    image_source_mode: 'asset',
+    content: [
+      { type: 'text', text: 'Portrait fixture' },
+      { type: 'image_url', role: 'reference_image', image_url: { url: 'tos://bucket/image.png' } },
+    ],
+  })
+  assert.equal(imageAsset.requestBody.image_source_mode, 'asset')
+  assert.equal(imageAsset.requestBody.content[1].image_url.url, 'tos://bucket/image.png')
+
+  const videoAsset = decode({
+    video_source_mode: 'asset',
+    content: [
+      { type: 'text', text: 'Video fixture' },
+      { type: 'video_url', role: 'reference_video', video_url: { url: 'asset://video-asset-1' } },
+    ],
+  })
+  assert.equal(videoAsset.requestBody.video_source_mode, 'asset')
+  assert.equal(videoAsset.requestBody.content[1].video_url.url, 'asset://video-asset-1')
+})
+
+test('keeps local image placeholders available for the host JSON inliner', () => {
+  const decoded = plugin.decodeRequest({
+    model: 'doubao-seedance-2-5-260628',
+    body: {
+      kind: 'json',
+      value: {
+        prompt: 'Local image fixture',
+        image_source_mode: 'asset',
+        content: [
+          { type: 'text', text: 'Local image fixture' },
+          {
+            type: 'image_url',
+            role: 'reference_image',
+            image_url: { url: { __fileRef: 'request_file:image', encoding: 'dataUrl', mimeType: 'image/png' } },
+          },
+        ],
+      },
+    },
+  })
+  assert.deepEqual(decoded.requestBody.content[1].image_url.url, {
+    __fileRef: 'request_file:image',
+    encoding: 'dataUrl',
+    mimeType: 'image/png',
+  })
+})
+
+test('maps one local multipart image to a host file placeholder', () => {
+  const decoded = plugin.decodeRequest({
+    model: 'doubao-seedance-2-5-260628',
+    body: {
+      kind: 'multipart',
+      fields: {
+        prompt: ['Local multipart image'],
+      },
+      files: [{
+        field: 'image',
+        ref: 'request_file:image',
+        filename: 'portrait.png',
+        mimeType: 'image/png',
+        size: 12,
+      }],
+    },
+  })
+  assert.deepEqual(decoded.requestBody.content[1].image_url.url, {
+    __fileRef: 'request_file:image',
+    encoding: 'dataUrl',
+    mimeType: 'image/png',
+  })
 })
 
 test('builds the documented task query and preserves gateway/Ark IDs', () => {

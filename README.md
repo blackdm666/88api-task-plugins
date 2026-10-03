@@ -56,6 +56,11 @@ The adapter keeps XM-style request normalization but emits Ark-native
 supports the documented Seedance 2.5/2.0/1.5/1.0 model limits, gateway
 `task_...` IDs, subsequent Ark `cgt-*` IDs, `content.video_url` results,
 provider errors, completion token evidence, and completion usage facts.
+SDGO image/video asset modes are forwarded unchanged, including existing
+`asset://` references and presigned `tos://` sources. A local multipart image
+can be inlined by the NewAPI host for ordinary image input, but it does not
+replace SDGO's asset presign flow; local video files still need to be uploaded
+to SDGO first because the provider does not accept video Base64.
 Provider-native top-level fields outside the XM compatibility surface are
 forwarded unchanged, including `callback_url`; the adapter does not rewrite
 that callback to a NewAPI or Volcano endpoint. Site-compatible fields are
