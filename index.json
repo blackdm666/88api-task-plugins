@@ -35,8 +35,15 @@
       "protocols": [
         "openai_video"
       ],
-      "latest": "2.0.1",
+      "latest": "2.0.2",
       "versions": [
+        {
+          "version": "2.0.2",
+          "path": "plugins/minimax-h3/2.0.2/plugin.js",
+          "sha256": "9e41ab5ac9a313e82bd40a0f69a5835effcaf26a203483fb6f1661fb457e839d",
+          "minApiVersion": 1,
+          "kind": "task"
+        },
         {
           "version": "2.0.1",
           "path": "plugins/minimax-h3/2.0.1/plugin.js",
@@ -155,8 +162,15 @@
       "protocols": [
         "openai_video"
       ],
-      "latest": "3.0.5",
+      "latest": "3.0.6",
       "versions": [
+        {
+          "version": "3.0.6",
+          "path": "plugins/xm-video/3.0.6/plugin.js",
+          "sha256": "62c8ba898c7210991dab700302f70d66037996e22217dd411f90b1d14cf6be44",
+          "minApiVersion": 1,
+          "kind": "task"
+        },
         {
           "version": "3.0.5",
           "path": "plugins/xm-video/3.0.5/plugin.js",
