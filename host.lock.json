@@ -1,8 +1,8 @@
 {
   "repository": "blackdm666/new-api",
-  "commit": "846b1044b68c9a64f8fc8df9d22d32264632e7fa",
-  "testedVersion": "v1.0.0-rc.37-88api.9",
-  "minimum88ApiVersion": "v1.0.0-rc.37-88api.6",
+  "commit": "5c04ea0d2ae92b6e0f0454719fbd5f37c4453f49",
+  "testedVersion": "v1.0.0-rc.39-88api.1",
+  "minimum88ApiVersion": "v1.0.0-rc.39-88api.1",
   "apiVersion": 1,
   "requiredFeatures": ["dynamicModels", "openai_video"],
   "plugins": ["gx-video", "minimax-h3", "minimax-h3-async", "sdgo-video", "xm-video"]

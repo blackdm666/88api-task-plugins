@@ -97,7 +97,7 @@ export const meta = {
   apiVersion: 1,
   key: "sdgo-video",
   name: "SD-Video",
-  version: "1.0.8",
+  version: "1.1.0",
   author: { name: "88API" },
   description: {
     en: "Seedance video generation through the SDGO OpenAI-compatible task API",
@@ -106,6 +106,8 @@ export const meta = {
   models: CATALOG_MODELS,
   dynamicModels: true,
   fetchMode: "per_task",
+  allowedHosts: ["sdgotop.tos-cn-beijing.volces.com"],
+  requiredCapabilities: ["task-preflight@1"],
   protocols: ["openai_video"],
   usageSchema: usageSchema(RESOLUTIONS),
   usageExamples: usageExamples(RESOLUTIONS),
@@ -559,7 +561,104 @@ function base(ctx) {
   return text(ctx.baseUrl).replace(/\/+$/, "").replace(/\/api\/v3$/i, "").replace(/\/v1$/i, "");
 }
 
+function imageFileRefs(value, refs = new Set()) {
+  if (Array.isArray(value)) {
+    for (const item of value) imageFileRefs(item, refs);
+    return refs;
+  }
+  if (!value || typeof value !== "object") return refs;
+  const media = value.image_url;
+  const url = media && typeof media === "object" ? media.url : null;
+  if (url && typeof url === "object" && typeof url.__fileRef === "string") refs.add(url.__fileRef);
+  for (const item of Object.values(value)) imageFileRefs(item, refs);
+  return refs;
+}
+
+function localImageFiles(ctx) {
+  const refs = [...imageFileRefs(ctx && ctx.requestBody)];
+  const files = Array.isArray(ctx && ctx.files) ? ctx.files : [];
+  const result = refs.map((ref) => files.find((file) => file && file.ref === ref));
+  if (result.some((file) => !file)) throw new Error("SDGO 本地图片素材引用无效，找不到对应上传文件。");
+  if (result.length > 1) throw new Error("SDGO 当前插件单次请求仅支持一个本地图片素材，请改用公网图片或拆分请求。");
+  return result;
+}
+
+function localImageFile(ctx) {
+  return localImageFiles(ctx)[0];
+}
+
+function preflightData(ctx) {
+  return object(object(ctx.preflightResponse).data);
+}
+
+function uploadedAssetSource(ctx) {
+  const source = text(preflightData(ctx).source);
+  return /^tos:\/\//i.test(source) || /^asset:\/\//i.test(source) ? source : "";
+}
+
+function requestWithAssetImage(request, file, source) {
+  const body = JSON.parse(JSON.stringify(request));
+  const content = Array.isArray(body.content) ? body.content : [];
+  let replaced = false;
+  for (const item of content) {
+    if (!item || item.type !== "image_url" || !item.image_url || typeof item.image_url !== "object") continue;
+    const url = item.image_url.url;
+    if (!url || typeof url !== "object" || url.__fileRef !== file.ref) continue;
+    item.image_url.url = source;
+    replaced = true;
+  }
+  if (!replaced) throw new Error("未找到本地图片素材，无法转换为 SDGO 素材库引用。");
+  body.image_source_mode = "asset";
+  return body;
+}
+
+export function buildPreflightRequest(ctx) {
+  const file = localImageFile(ctx);
+  if (!file) return null;
+  if (!ctx.apiKey) throw new Error("SDGO 素材库上传需要渠道 API Key。");
+  return {
+    url: base(ctx) + "/v1/seedance/uploads/presign",
+    method: "POST",
+    headers: {
+      Authorization: "Bearer " + ctx.apiKey,
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: {
+      filename: file.filename,
+      size: file.size,
+      content_type: text(file.mimeType) || "application/octet-stream",
+    },
+  };
+}
+
+export function buildUploadRequest(ctx) {
+  const file = localImageFile(ctx);
+  if (!file || !ctx.preflightResponse) return null;
+  const data = preflightData(ctx);
+  const uploadURL = text(data.upload_url);
+  if (!uploadURL) throw new Error("SDGO 素材库预签名响应缺少上传地址。");
+  const returnedHeaders = object(data.headers);
+  const headers = {};
+  for (const [name, value] of Object.entries(returnedHeaders)) {
+    if (typeof value === "string" && value.trim()) headers[name] = value;
+  }
+  return {
+    url: uploadURL,
+    method: "PUT",
+    headers,
+    credentialless: true,
+    bodyType: "file",
+    fileRef: file.ref,
+  };
+}
+
 export function buildSubmitRequest(ctx) {
+  let requestBody = ctx.requestBody;
+  const file = localImageFile(ctx);
+  const source = file && uploadedAssetSource(ctx);
+  if (file && !source) throw new Error("SDGO 本地图片素材上传未完成，未向上游提交内联真人图片。");
+  if (file && source) requestBody = requestWithAssetImage(requestBody, file, source);
   return {
     url: base(ctx) + "/api/v3/contents/generations/tasks",
     method: "POST",
@@ -568,7 +667,7 @@ export function buildSubmitRequest(ctx) {
       "Content-Type": "application/json",
       Accept: "application/json",
     },
-    body: payloadFor(ctx.requestBody, ctx.model, ctx.upstreamModel),
+    body: payloadFor(requestBody, ctx.model, ctx.upstreamModel),
   };
 }
 

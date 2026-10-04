@@ -17,7 +17,8 @@ function decode(value = {}, model = 'doubao-seedance-2-5-260628') {
 test('declares the SDGO dynamic plugin and official models remain discoverable', () => {
   assert.equal(plugin.meta.key, 'sdgo-video')
   assert.equal(plugin.meta.name, 'SD-Video')
-  assert.equal(plugin.meta.version, '1.0.8')
+  assert.equal(plugin.meta.version, '1.1.0')
+  assert.deepEqual(plugin.meta.requiredCapabilities, ['task-preflight@1'])
   assert.equal(plugin.meta.dynamicModels, true)
   assert.deepEqual(plugin.meta.models, [
     'doubao-seedance-2-0-mini-260615',
@@ -192,6 +193,136 @@ test('maps one local multipart image to a host file placeholder', () => {
     encoding: 'dataUrl',
     mimeType: 'image/png',
   })
+})
+
+test('preflights local multipart images into the SDGO asset library', () => {
+  const decoded = plugin.decodeRequest({
+    model: 'doubao-seedance-2-5-260628',
+    body: {
+      kind: 'multipart',
+      fields: { prompt: ['Local asset image'] },
+      files: [{
+        field: 'image',
+        ref: 'request_file:image',
+        filename: 'portrait.png',
+        mimeType: 'image/png',
+        size: 1234,
+      }],
+    },
+  })
+  const ctx = {
+    ...decoded,
+    baseUrl: 'https://sdgo.top',
+    apiKey: 'fixture-key',
+    files: [{
+      ref: 'request_file:image',
+      field: 'image',
+      filename: 'portrait.png',
+      mimeType: 'image/png',
+      size: 1234,
+    }],
+  }
+  const presign = plugin.buildPreflightRequest(ctx)
+  assert.equal(presign.url, 'https://sdgo.top/v1/seedance/uploads/presign')
+  assert.equal(presign.body.filename, 'portrait.png')
+  assert.equal(presign.body.size, 1234)
+  assert.equal(presign.body.content_type, 'image/png')
+  const upload = plugin.buildUploadRequest({
+    ...ctx,
+    preflightResponse: {
+      data: {
+        source: 'tos://seedance/input/fixture.png',
+        upload_url: 'https://sdgotop.tos-cn-beijing.volces.com/fixture.png?signature=fixture',
+        headers: { 'Content-Type': 'image/png' },
+      },
+    },
+  })
+  assert.equal(upload.method, 'PUT')
+  assert.equal(upload.credentialless, true)
+  assert.equal(upload.bodyType, 'file')
+  assert.equal(upload.fileRef, 'request_file:image')
+  assert.deepEqual(upload.headers, { 'Content-Type': 'image/png' })
+  const submitted = plugin.buildSubmitRequest({
+    ...ctx,
+    preflightResponse: {
+      data: { source: 'tos://seedance/input/fixture.png' },
+    },
+  })
+  assert.equal(submitted.body.image_source_mode, 'asset')
+  assert.equal(submitted.body.content[1].image_url.url, 'tos://seedance/input/fixture.png')
+})
+
+test('does not fall back to an inline local image when the asset upload is incomplete', () => {
+  const decoded = plugin.decodeRequest({
+    model: 'doubao-seedance-2-5-260628',
+    body: {
+      kind: 'multipart',
+      fields: { prompt: ['Local asset image'] },
+      files: [{
+        field: 'image',
+        ref: 'request_file:image',
+        filename: 'portrait.png',
+        mimeType: 'image/png',
+        size: 1234,
+      }],
+    },
+  })
+  const ctx = {
+    ...decoded,
+    baseUrl: 'https://sdgo.top',
+    apiKey: 'fixture-key',
+    files: [{
+      ref: 'request_file:image',
+      field: 'image',
+      filename: 'portrait.png',
+      mimeType: 'image/png',
+      size: 1234,
+    }],
+  }
+  assert.throws(
+    () => plugin.buildSubmitRequest(ctx),
+    /本地图片素材上传未完成/,
+  )
+})
+
+test('rejects multiple local image files instead of mixing inline and asset modes', () => {
+  const decoded = plugin.decodeRequest({
+    model: 'doubao-seedance-2-5-260628',
+    body: {
+      kind: 'json',
+      value: {
+        prompt: 'Two local images',
+        content: [
+          { type: 'text', text: 'Two local images' },
+          {
+            type: 'image_url',
+            role: 'reference_image',
+            image_url: {
+              url: { __fileRef: 'request_file:first', encoding: 'dataUrl', mimeType: 'image/png' },
+            },
+          },
+          {
+            type: 'image_url',
+            role: 'reference_image',
+            image_url: {
+              url: { __fileRef: 'request_file:second', encoding: 'dataUrl', mimeType: 'image/png' },
+            },
+          },
+        ],
+      },
+    },
+  })
+  assert.throws(
+    () => plugin.buildPreflightRequest({
+      ...decoded,
+      apiKey: 'fixture-key',
+      files: [
+        { ref: 'request_file:first', filename: 'first.png', mimeType: 'image/png', size: 10 },
+        { ref: 'request_file:second', filename: 'second.png', mimeType: 'image/png', size: 10 },
+      ],
+    }),
+    /仅支持一个本地图片素材/,
+  )
 })
 
 test('builds the documented task query and preserves gateway/Ark IDs', () => {
