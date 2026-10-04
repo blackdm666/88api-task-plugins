@@ -18,7 +18,7 @@ func TestIndependentPluginCatalogueSDGOVideoContract(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "sdgo-video", plugin.Meta.Key)
 	assert.Equal(t, "SD-Video", plugin.Meta.Name)
-	assert.Equal(t, "1.0.7", plugin.Meta.Version)
+	assert.Equal(t, "1.0.8", plugin.Meta.Version)
 	assert.True(t, plugin.Meta.DynamicModels)
 	assert.Equal(t, []string{
 		"doubao-seedance-2-0-mini-260615",
@@ -44,6 +44,29 @@ func TestIndependentPluginCatalogueSDGOVideoContract(t *testing.T) {
 	assert.EqualValues(t, -1, requestBody["duration"])
 	assert.Equal(t, "adaptive", requestBody["ratio"])
 	assert.Equal(t, "image_url", requestBody["content"].([]any)[1].(map[string]any)["type"])
+
+	assetDecoded, err := plugin.Engine.CallPath(context.Background(), "protocols",
+		[]string{"openai_video", "decodeRequest"}, map[string]any{
+			"model": "doubao-seedance-2-5-260628",
+			"body": map[string]any{"kind": "json", "value": map[string]any{
+				"prompt": "Asset fixture",
+				"content": []any{
+					map[string]any{"type": "text", "text": "Asset fixture"},
+					map[string]any{
+						"type": "image_url", "role": "reference_image",
+						"image_url": map[string]any{"url": "tos://bucket/image.png"},
+					},
+					map[string]any{
+						"type": "video_url", "role": "reference_video",
+						"video_url": map[string]any{"url": "asset://video-asset-1"},
+					},
+				},
+			}},
+		})
+	require.NoError(t, err)
+	assetBody := assetDecoded.(map[string]any)["requestBody"].(map[string]any)
+	assert.Equal(t, "asset", assetBody["image_source_mode"])
+	assert.Equal(t, "asset", assetBody["video_source_mode"])
 
 	value, err := plugin.Engine.Call(context.Background(), "buildSubmitRequest", map[string]any{
 		"model": "doubao-seedance-2-5-260628",

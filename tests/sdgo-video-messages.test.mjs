@@ -17,7 +17,7 @@ function decode(value = {}, model = 'doubao-seedance-2-5-260628') {
 test('declares the SDGO dynamic plugin and official models remain discoverable', () => {
   assert.equal(plugin.meta.key, 'sdgo-video')
   assert.equal(plugin.meta.name, 'SD-Video')
-  assert.equal(plugin.meta.version, '1.0.7')
+  assert.equal(plugin.meta.version, '1.0.8')
   assert.equal(plugin.meta.dynamicModels, true)
   assert.deepEqual(plugin.meta.models, [
     'doubao-seedance-2-0-mini-260615',
@@ -93,9 +93,8 @@ test('preserves official content items and accepts a base URL with /api/v3', () 
   assert.equal(submit.body.resolution, '4k')
 })
 
-test('connects SDGO image/video asset modes and presigned tos sources', () => {
+test('infers SDGO asset modes for asset and presigned tos sources', () => {
   const imageAsset = decode({
-    image_source_mode: 'asset',
     content: [
       { type: 'text', text: 'Portrait fixture' },
       { type: 'image_url', role: 'reference_image', image_url: { url: 'tos://bucket/image.png' } },
@@ -105,7 +104,6 @@ test('connects SDGO image/video asset modes and presigned tos sources', () => {
   assert.equal(imageAsset.requestBody.content[1].image_url.url, 'tos://bucket/image.png')
 
   const videoAsset = decode({
-    video_source_mode: 'asset',
     content: [
       { type: 'text', text: 'Video fixture' },
       { type: 'video_url', role: 'reference_video', video_url: { url: 'asset://video-asset-1' } },
@@ -113,6 +111,37 @@ test('connects SDGO image/video asset modes and presigned tos sources', () => {
   })
   assert.equal(videoAsset.requestBody.video_source_mode, 'asset')
   assert.equal(videoAsset.requestBody.content[1].video_url.url, 'asset://video-asset-1')
+
+  const legacyFields = decode({
+    referenceImages: ['asset://image-asset-1'],
+    referenceVideos: ['tos://bucket/video.mp4'],
+  })
+  assert.equal(legacyFields.requestBody.image_source_mode, 'asset')
+  assert.equal(legacyFields.requestBody.video_source_mode, 'asset')
+})
+
+test('preserves explicit SDGO media source modes and does not infer for HTTPS URLs', () => {
+  const direct = decode({
+    image_source_mode: 'direct_url',
+    video_source_mode: 'direct_url',
+    content: [
+      { type: 'text', text: 'Direct fixture' },
+      { type: 'image_url', role: 'reference_image', image_url: { url: image } },
+      { type: 'video_url', role: 'reference_video', video_url: { url: video } },
+    ],
+  })
+  assert.equal(direct.requestBody.image_source_mode, 'direct_url')
+  assert.equal(direct.requestBody.video_source_mode, 'direct_url')
+
+  const https = decode({
+    content: [
+      { type: 'text', text: 'HTTPS fixture' },
+      { type: 'image_url', role: 'reference_image', image_url: { url: image } },
+      { type: 'video_url', role: 'reference_video', video_url: { url: video } },
+    ],
+  })
+  assert.equal(https.requestBody.image_source_mode, undefined)
+  assert.equal(https.requestBody.video_source_mode, undefined)
 })
 
 test('keeps local image placeholders available for the host JSON inliner', () => {

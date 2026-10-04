@@ -97,7 +97,7 @@ export const meta = {
   apiVersion: 1,
   key: "sdgo-video",
   name: "SD-Video",
-  version: "1.0.7",
+  version: "1.0.8",
   author: { name: "88API" },
   description: {
     en: "Seedance video generation through the SDGO OpenAI-compatible task API",
@@ -275,6 +275,15 @@ function mediaSummary(content) {
   };
 }
 
+function hasAssetSource(items) {
+  return items.some((item) => {
+    const type = text(item.type);
+    const media = object(item[type]);
+    const url = media.url;
+    return typeof url === "string" && /^(asset|tos):\/\//i.test(url);
+  });
+}
+
 function integer(value, field) {
   if (typeof value === "boolean" || value === null || value === "") throw new Error(field + "必须是整数。");
   const number = Number(value);
@@ -417,6 +426,15 @@ function payloadFor(request, model, upstreamModel) {
   const resolution = resolutionFor(first(all.resolution, all.quality, all.vquality), cfg);
   const ratio = ratioFor(first(all.ratio, all.aspect_ratio), cfg, hasFrame);
   const body = { model: upstream, content, duration, resolution, ratio };
+  // SDGO requires asset mode for provider asset references. Keep an
+  // explicitly supplied mode (including direct_url) untouched; only infer
+  // the mode when the request actually contains asset:// or tos:// media.
+  if (!first(all.image_source_mode) && hasAssetSource(media.images)) {
+    body.image_source_mode = "asset";
+  }
+  if (!first(all.video_source_mode) && hasAssetSource(media.videos)) {
+    body.video_source_mode = "asset";
+  }
   const taskType = first(all.omni_reference_task_type, all.omniReferenceTaskType);
   if (taskType) {
     if (!cfg.omni) throw new Error("omni_reference_task_type 仅 Seedance 2.5 支持。");

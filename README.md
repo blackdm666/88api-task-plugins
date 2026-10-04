@@ -57,7 +57,11 @@ supports the documented Seedance 2.5/2.0/1.5/1.0 model limits, gateway
 `task_...` IDs, subsequent Ark `cgt-*` IDs, `content.video_url` results,
 provider errors, completion token evidence, and completion usage facts.
 SDGO image/video asset modes are forwarded unchanged, including existing
-`asset://` references and presigned `tos://` sources. A local multipart image
+`asset://` references and presigned `tos://` sources. When either media type
+contains one of those provider asset URLs and its source mode is omitted, the
+adapter automatically sends the corresponding `image_source_mode=asset` or
+`video_source_mode=asset`; an explicitly supplied `direct_url` or `asset`
+mode is preserved. A local multipart image
 can be inlined by the NewAPI host for ordinary image input, but it does not
 replace SDGO's asset presign flow; local video files still need to be uploaded
 to SDGO first because the provider does not accept video Base64.
