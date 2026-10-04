@@ -56,6 +56,12 @@ test('normalizes XM-style fields into Ark content items', () => {
   assert.equal(decoded.requestBody.omni_reference_task_type, 'reference')
 })
 
+test('Seedance prompts have no plugin-side length cap', () => {
+  const prompt = '字'.repeat(10000)
+  const decoded = decode({ prompt })
+  assert.equal(decoded.requestBody.content[0].text, prompt)
+})
+
 test('preserves official content items and accepts a base URL with /api/v3', () => {
   const decoded = plugin.decodeRequest({
     model: 'doubao-seedance-2-0-260128',

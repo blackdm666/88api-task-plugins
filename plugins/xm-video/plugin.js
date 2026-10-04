@@ -6,7 +6,7 @@ const MODEL_CONFIGS = {};
 function addModel(name, upstream, resolution, overrides) {
   MODEL_CONFIGS[name] = Object.assign({ upstream: upstream, resolution: resolution,
     defaultDuration: 5, minDuration: 4, maxDuration: 15, defaultRatio: "16:9",
-    ratios: RATIOS.concat(["21:9"]), maxPrompt: 5000, images: 9, videos: 3,
+    ratios: RATIOS.concat(["21:9"]), maxPrompt: Infinity, images: 9, videos: 3,
     audios: 3, framesExclusive: false, promptless: false, nativeMedia: false,
     generateAudio: false, visualWithAudio: false, totalMedia: 0 }, overrides);
 }
@@ -46,7 +46,7 @@ export const meta = {
   apiVersion: 1,
   key: "xm-video",
   name: "XM-Video",
-  version: "3.0.5",
+  version: "3.0.6",
   author: { name: "88API" },
   description: { en: "88API channel integration plugin", zh: "88API渠道集成插件" },
   models: [],
@@ -158,7 +158,9 @@ function payloadFor(req, model, upstreamModel) {
   if (!prompt && (!cfg.promptless || !images.length && !videos.length && !audios.length && !firstFrame && !lastFrame && !body.media)) throw new Error(cfg.promptless
     ? "请输入提示词，或添加当前模型支持的参考素材。"
     : "当前模型需要提示词，请填写后再提交。");
-  if (Array.from(prompt).length > cfg.maxPrompt) throw new Error("提示词过长，请控制在 " + cfg.maxPrompt + " 个字符以内。");
+  if (Number.isFinite(cfg.maxPrompt) && Array.from(prompt).length > cfg.maxPrompt) {
+    throw new Error("提示词过长，请控制在 " + cfg.maxPrompt + " 个字符以内。");
+  }
   if (cfg.ratios && !cfg.ratios.includes(body.ratio)) throw new Error(body.ratio === "auto"
     ? "当前模型不支持自动比例，请选择具体画幅比例。"
     : "当前模型不支持该画幅比例，请选择：" + cfg.ratios.filter(function (ratio) { return !isVS25 || ratio !== "auto"; }).join("、") + "。");

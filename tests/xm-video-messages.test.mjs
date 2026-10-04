@@ -44,6 +44,13 @@ test('prompt and reference limits give actionable model-specific guidance', () =
   }
 })
 
+test('Seedance prompts are forwarded without the default plugin-side cap', () => {
+  const prompt = '字'.repeat(10000)
+  const decoded = decode({ prompt }, 'SD2.5 720P')
+  assert.equal(decoded.requestBody.prompt, prompt)
+  assert.doesNotThrow(() => decode({ prompt }, 'Seedance-2.5-720p官方版'))
+})
+
 test('audio, metadata, callback and multipart errors are localized', () => {
   assert.throws(() => decode({ generateAudio: 'false' }), /音频开关参数无效/)
   assert.throws(() => decode({ generateAudio: false }, 'wan3.0-video-720p'), /不支持音频开关/)

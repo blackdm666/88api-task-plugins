@@ -20,7 +20,6 @@ for (const [name, input, message] of [
   ['missing prompt', { prompt: '' }, '请输入一段非空提示词；每次请求只能包含一段提示词。'],
   ['empty text', { metadata: { content: [{ type: 'text', text: ' ' }] } }, '提示词不能为空，请输入视频内容描述。'],
   ['duplicate text', content([{ type: 'text', text: 'Second' }]), '请输入一段非空提示词；每次请求只能包含一段提示词。'],
-  ['long prompt', { prompt: '字'.repeat(7001) }, '提示词过长，请缩短至 7000 个字符以内。'],
   ['duration', { duration: 1.5 }, '视频时长需为 1 到 15 秒之间的整数，请调整后提交。'],
   ['resolution', { resolution: '1080p' }, '当前模型仅支持 768P 分辨率，请选择 768P。'],
   ['ratio', { ratio: 'auto' }, '当前模型不支持该画幅比例，请选择：adaptive、21:9、16:9、4:3、1:1、3:4、9:16。'],
@@ -67,6 +66,12 @@ test('request format and service configuration provide actionable guidance', () 
   assert.throws(() => plugin.buildSubmitRequest({
     ...driver({ duration: 0 }), upstreamModel: 'future-model',
   }), { message: '请明确填写视频时长，时长必须是正整数秒数。' })
+})
+
+test('prompt length is forwarded without a plugin-side cap', () => {
+  const prompt = '字'.repeat(10000)
+  const decoded = decode(json({ prompt }))
+  assert.equal(decoded.requestBody.prompt, prompt)
 })
 
 test('missing service details use Chinese guidance without suggesting duplicate generation', () => {

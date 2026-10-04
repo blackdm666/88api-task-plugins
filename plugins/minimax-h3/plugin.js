@@ -6,7 +6,7 @@ export const meta = {
     en: "88API channel integration plugin",
     zh: "88API渠道集成插件",
   },
-  version: "2.0.1",
+  version: "2.0.2",
   author: { name: "88API" },
   // Internal routing identity. The DMC upstream model remains MiniMax-H3 in
   // buildSubmitRequest; keeping the registry name unique lets this plugin
@@ -33,7 +33,6 @@ const MODEL = "MiniMax-H3";
 const DEFAULT_DURATION = 5;
 const MIN_DURATION = 1;
 const MAX_DURATION = 15;
-const MAX_PROMPT_CODE_POINTS = 7000;
 const MAX_REFERENCE_IMAGES = 9;
 const MAX_REFERENCE_VIDEOS = 3;
 const MAX_REFERENCE_AUDIOS = 3;
@@ -48,12 +47,6 @@ function normalizedBaseUrl(value) {
   const baseUrl = trimmed(value).replace(/\/+$/, "");
   if (!baseUrl) throw new Error("视频服务尚未配置访问地址，请联系管理员。");
   return baseUrl;
-}
-
-function codePointLength(value) {
-  let count = 0;
-  for (const _character of value) count += 1;
-  return count;
 }
 
 function asArray(value) {
@@ -178,7 +171,6 @@ function validateContent(content) {
     if (item.type === "text") {
       textCount += 1;
       if (!item.text) throw new Error("提示词不能为空，请输入视频内容描述。");
-      if (codePointLength(item.text) > MAX_PROMPT_CODE_POINTS) throw new Error("提示词过长，请缩短至 7000 个字符以内。");
       continue;
     }
     if (item.type === "image_url") {
