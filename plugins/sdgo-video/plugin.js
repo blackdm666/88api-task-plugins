@@ -97,7 +97,7 @@ export const meta = {
   apiVersion: 1,
   key: "sdgo-video",
   name: "SD-Video",
-  version: "1.1.2",
+  version: "1.1.3",
   author: { name: "88API" },
   description: {
     en: "Seedance video generation through the SDGO OpenAI-compatible task API",
@@ -365,6 +365,7 @@ const COMPATIBILITY_KEYS = new Set([
   "referenceAudios", "reference_audios", "firstFrame", "first_frame", "lastFrame",
   "last_frame", "seconds", "duration", "quality", "vquality", "aspect_ratio",
   "outputFormat", "generateAudio", "omniReferenceTaskType",
+  "__sdgo_auto_duration",
 ]);
 
 function copyForwardFields(body, all) {
@@ -377,7 +378,7 @@ function copyForwardFields(body, all) {
   return body;
 }
 
-function payloadFor(request, model, upstreamModel) {
+function payloadFor(request, model, upstreamModel, options = {}) {
   const req = object(request);
   const metadata = parseMetadata(req.metadata);
   // SDGO accepts legacy metadata, but documents metadata as taking precedence.
@@ -422,13 +423,24 @@ function payloadFor(request, model, upstreamModel) {
     }
   }
   const requestedTaskType = first(all.omni_reference_task_type, all.omniReferenceTaskType);
-  const duration = durationFor(all.duration !== undefined ? all.duration : all.seconds, cfg);
+  const duration = all.__sdgo_auto_duration === true
+    ? -1
+    : durationFor(all.duration !== undefined ? all.duration : all.seconds, cfg);
   if (duration === -1 && (cfg.family === "1.0" || cfg.family === "1.0-fast")) {
     throw new Error("Seedance 1.0 不支持 -1 时长。");
   }
   const resolution = resolutionFor(first(all.resolution, all.quality, all.vquality), cfg);
   const ratio = ratioFor(first(all.ratio, all.aspect_ratio), cfg, hasFrame);
-  const body = { model: upstream, content, duration, resolution, ratio };
+  const body = { model: upstream, content, resolution, ratio };
+  if (duration === -1 && options.hostSafe) {
+    // NewAPI validates the decoded request recursively before it calls the
+    // provider. Its canonical duration/seconds fields cannot be negative,
+    // while SDGO uses duration=-1 to request provider-selected duration.
+    // Keep an internal marker in the host request and restore -1 at submit.
+    body.__sdgo_auto_duration = true;
+  } else {
+    body.duration = duration;
+  }
   // SDGO requires asset mode for provider asset references. Keep an
   // explicitly supplied mode (including direct_url) untouched; only infer
   // the mode when the request actually contains asset:// or tos:// media.
@@ -566,7 +578,7 @@ export function decodeRequest(ctx) {
   } else {
     req = parseMultipart(ctx);
   }
-  const body = payloadFor(req, ctx.model, ctx.upstreamModel);
+  const body = payloadFor(req, ctx.model, ctx.upstreamModel, { hostSafe: true });
   return {
     kind: "submit",
     model: ctx.model,

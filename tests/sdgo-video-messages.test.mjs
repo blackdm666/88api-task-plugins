@@ -17,7 +17,7 @@ function decode(value = {}, model = 'doubao-seedance-2-5-260628') {
 test('declares the SDGO dynamic plugin and official models remain discoverable', () => {
   assert.equal(plugin.meta.key, 'sdgo-video')
   assert.equal(plugin.meta.name, 'SD-Video')
-  assert.equal(plugin.meta.version, '1.1.2')
+  assert.equal(plugin.meta.version, '1.1.3')
   assert.deepEqual(plugin.meta.requiredCapabilities, ['task-preflight@1'])
   assert.equal(plugin.meta.dynamicModels, true)
   assert.deepEqual(plugin.meta.models, [
@@ -52,7 +52,8 @@ test('normalizes XM-style fields into Ark content items', () => {
     { type: 'video_url', role: 'reference_video', video_url: { url: video } },
     { type: 'audio_url', role: 'reference_audio', audio_url: { url: audio } },
   ])
-  assert.equal(decoded.requestBody.duration, -1)
+  assert.equal(decoded.requestBody.duration, undefined)
+  assert.equal(decoded.requestBody.__sdgo_auto_duration, true)
   assert.equal(decoded.requestBody.resolution, '1080p')
   assert.equal(decoded.requestBody.omni_reference_task_type, 'reference')
 })
@@ -463,7 +464,8 @@ test('keeps -1 for the provider but uses a finite duration estimate for billing'
     metadata: { duration: -1 },
     referenceVideos: [video],
   })
-  assert.equal(metadataDuration.requestBody.duration, -1)
+  assert.equal(metadataDuration.requestBody.duration, undefined)
+  assert.equal(metadataDuration.requestBody.__sdgo_auto_duration, true)
   assert.deepEqual(plugin.extractUsage({ requestBody: metadataDuration.requestBody }), {
     seconds: 30,
     resolution: '720p',
@@ -474,7 +476,8 @@ test('keeps -1 for the provider but uses a finite duration estimate for billing'
     prompt: 'Omitted duration fixture',
     referenceVideos: [video],
   })
-  assert.equal(omittedDuration.requestBody.duration, -1)
+  assert.equal(omittedDuration.requestBody.duration, undefined)
+  assert.equal(omittedDuration.requestBody.__sdgo_auto_duration, true)
   assert.equal(plugin.extractUsage({ requestBody: omittedDuration.requestBody }).seconds, 30)
 
   const metadataFixedDuration = decode({
@@ -483,6 +486,21 @@ test('keeps -1 for the provider but uses a finite duration estimate for billing'
     referenceVideos: [video],
   })
   assert.equal(plugin.extractUsage({ requestBody: metadataFixedDuration.requestBody }).seconds, 8)
+})
+
+test('keeps host validation safe while restoring provider-selected duration at submit', () => {
+  const decoded = decode({ duration: -1, referenceVideos: [video] })
+  assert.equal(decoded.requestBody.duration, undefined)
+  assert.equal(decoded.requestBody.__sdgo_auto_duration, true)
+  const submitted = plugin.buildSubmitRequest({
+    model: decoded.model,
+    upstreamModel: decoded.model,
+    requestBody: decoded.requestBody,
+    baseUrl: 'https://sdgo.top',
+    apiKey: 'fixture',
+  })
+  assert.equal(submitted.body.duration, -1)
+  assert.equal(submitted.body.__sdgo_auto_duration, undefined)
 })
 
 test('enforces SDGO documented model and media limits', () => {

@@ -18,7 +18,7 @@ func TestIndependentPluginCatalogueSDGOVideoContract(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "sdgo-video", plugin.Meta.Key)
 	assert.Equal(t, "SD-Video", plugin.Meta.Name)
-	assert.Equal(t, "1.1.2", plugin.Meta.Version)
+	assert.Equal(t, "1.1.3", plugin.Meta.Version)
 	assert.True(t, plugin.Meta.DynamicModels)
 	assert.Equal(t, []string{
 		"doubao-seedance-2-0-mini-260615",
@@ -41,7 +41,8 @@ func TestIndependentPluginCatalogueSDGOVideoContract(t *testing.T) {
 	require.NoError(t, err)
 	requestBody := decoded.(map[string]any)["requestBody"].(map[string]any)
 	assert.Equal(t, "doubao-seedance-2-5-260628", requestBody["model"])
-	assert.EqualValues(t, -1, requestBody["duration"])
+	assert.NotContains(t, requestBody, "duration")
+	assert.Equal(t, true, requestBody["__sdgo_auto_duration"])
 	assert.Equal(t, "adaptive", requestBody["ratio"])
 	assert.Equal(t, "image_url", requestBody["content"].([]any)[1].(map[string]any)["type"])
 
@@ -56,7 +57,8 @@ func TestIndependentPluginCatalogueSDGOVideoContract(t *testing.T) {
 		})
 	require.NoError(t, err)
 	metadataRequestBody := metadataDecoded.(map[string]any)["requestBody"].(map[string]any)
-	assert.EqualValues(t, -1, metadataRequestBody["duration"])
+	assert.NotContains(t, metadataRequestBody, "duration")
+	assert.Equal(t, true, metadataRequestBody["__sdgo_auto_duration"])
 	metadataUsage, err := plugin.Engine.CallPath(context.Background(), "extractUsage", []string{}, map[string]any{
 		"requestBody": metadataRequestBody,
 	})
@@ -97,6 +99,8 @@ func TestIndependentPluginCatalogueSDGOVideoContract(t *testing.T) {
 	request := value.(map[string]any)
 	assert.Equal(t, "https://sdgo.top/api/v3/contents/generations/tasks", request["url"])
 	assert.Equal(t, "Bearer fixture", request["headers"].(map[string]any)["Authorization"])
+	assert.EqualValues(t, -1, request["body"].(map[string]any)["duration"])
+	assert.NotContains(t, request["body"].(map[string]any), "__sdgo_auto_duration")
 
 	submitResult, err := plugin.Engine.Call(context.Background(), "parseSubmitResponse",
 		map[string]any{"requestBody": requestBody},
