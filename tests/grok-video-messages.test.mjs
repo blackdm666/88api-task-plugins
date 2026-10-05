@@ -80,6 +80,18 @@ test("builds submit/query and settles from the Sub2API response", () => {
   )
 })
 
+test("resolves relative result URLs without relying on unavailable URL global", () => {
+  const result = plugin.parseTaskResult(
+    { baseUrl: "https://sub.example.invalid/api" },
+    {
+      status: "completed",
+      video: { url: "/videos/task_fixture.mp4", duration: 8 },
+    },
+    { status: 200 },
+  )
+  assert.equal(result.url, "https://sub.example.invalid/videos/task_fixture.mp4")
+})
+
 test("rejects unsupported resolution, duration, and multiple images", () => {
   assert.throws(() => decode({ resolution: "4k" }), /不支持该分辨率/)
   assert.throws(() => decode({ duration: 16 }), /1 到 15 秒/)

@@ -161,7 +161,16 @@ function absoluteURL(baseUrl, value) {
   const raw = text(value);
   if (!raw) return "";
   if (/^https?:\/\//i.test(raw)) return raw;
-  return new URL(raw, baseUrl.replace(/\/+$/, "") + "/").toString();
+  const base = baseUrl.replace(/\/+$/, "");
+  if (/^\/\//.test(raw)) {
+    const scheme = (base.match(/^(https?:)/i) || [])[1];
+    return scheme ? scheme + raw : "";
+  }
+  if (raw.startsWith("/")) {
+    const origin = (base.match(/^(https?:\/\/[^/]+)/i) || [])[1];
+    return origin ? origin + raw : "";
+  }
+  return base + "/" + raw.replace(/^\/+/, "");
 }
 
 function progressFor(value, terminal) {
@@ -190,7 +199,7 @@ export const meta = {
   apiVersion: 1,
   key: "grok-video",
   name: "Grok Video",
-  version: "1.0.0",
+  version: "1.0.1",
   author: { name: "88API" },
   description: {
     en: "Grok Imagine Video through the Sub2API video task API",
