@@ -3,6 +3,30 @@
   "name": "88API Task Plugins",
   "plugins": [
     {
+      "key": "grok-video",
+      "name": "Grok Video",
+      "description": {
+        "en": "Grok Imagine Video through the Sub2API video task API",
+        "zh": "通过 Sub2API 视频任务接口接入 Grok Imagine Video"
+      },
+      "models": [
+        "grok-imagine-video-1.5"
+      ],
+      "protocols": [
+        "openai_video"
+      ],
+      "latest": "1.0.0",
+      "versions": [
+        {
+          "version": "1.0.0",
+          "path": "plugins/grok-video/1.0.0/plugin.js",
+          "sha256": "424e90646d1dc63c5aa4e2fd040818a23cfa3dc5840b6ed225a85c3cba54691d",
+          "minApiVersion": 1,
+          "kind": "task"
+        }
+      ]
+    },
+    {
       "key": "gx-video",
       "name": "GX-Video",
       "description": {
