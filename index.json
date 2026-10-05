@@ -10,13 +10,21 @@
         "zh": "通过 Sub2API 视频任务接口接入 Grok Imagine Video"
       },
       "models": [
-        "grok-imagine-video-1.5"
+        "grok-imagine-video-1.5",
+        "grok-imagine-video"
       ],
       "protocols": [
         "openai_video"
       ],
-      "latest": "1.0.1",
+      "latest": "1.0.2",
       "versions": [
+        {
+          "version": "1.0.2",
+          "path": "plugins/grok-video/1.0.2/plugin.js",
+          "sha256": "9e8a85f7e375bfda99dd2e1c598c7daccab9d0e675904e1964851f59a8d394b2",
+          "minApiVersion": 1,
+          "kind": "task"
+        },
         {
           "version": "1.0.1",
           "path": "plugins/grok-video/1.0.1/plugin.js",
