@@ -16,8 +16,15 @@
       "protocols": [
         "openai_video"
       ],
-      "latest": "1.0.3",
+      "latest": "1.0.4",
       "versions": [
+        {
+          "version": "1.0.4",
+          "path": "plugins/grok-video/1.0.4/plugin.js",
+          "sha256": "3fecd7c2232174a540a25692eab1ffff00c02a5531217be6a2f5acfdf17ce7ab",
+          "minApiVersion": 1,
+          "kind": "task"
+        },
         {
           "version": "1.0.3",
           "path": "plugins/grok-video/1.0.3/plugin.js",
