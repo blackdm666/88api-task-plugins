@@ -97,7 +97,7 @@ export const meta = {
   apiVersion: 1,
   key: "sdgo-video",
   name: "SD-Video",
-  version: "1.1.0",
+  version: "1.1.1",
   author: { name: "88API" },
   description: {
     en: "Seedance video generation through the SDGO OpenAI-compatible task API",
@@ -421,6 +421,7 @@ function payloadFor(request, model, upstreamModel) {
       throw new Error("Seedance 2.0 使用参考音频时，必须同时提供参考图片或参考视频。");
     }
   }
+  const requestedTaskType = first(all.omni_reference_task_type, all.omniReferenceTaskType);
   const duration = durationFor(all.duration !== undefined ? all.duration : all.seconds, cfg);
   if (duration === -1 && (cfg.family === "1.0" || cfg.family === "1.0-fast")) {
     throw new Error("Seedance 1.0 不支持 -1 时长。");
@@ -437,7 +438,7 @@ function payloadFor(request, model, upstreamModel) {
   if (!first(all.video_source_mode) && hasAssetSource(media.videos)) {
     body.video_source_mode = "asset";
   }
-  const taskType = first(all.omni_reference_task_type, all.omniReferenceTaskType);
+  const taskType = requestedTaskType;
   if (taskType) {
     if (!cfg.omni) throw new Error("omni_reference_task_type 仅 Seedance 2.5 支持。");
     if (!TASK_TYPES.includes(taskType)) throw new Error("omni_reference_task_type 只支持 auto、reference、edit 或 extend。");
@@ -498,6 +499,23 @@ function payloadFor(request, model, upstreamModel) {
     body.priority = priority;
   }
   return copyForwardFields(body, all);
+}
+
+function normalizeImplicitVideoEdit(body) {
+  const value = object(body);
+  const model = text(value.model);
+  const cfg = modelConfig(model);
+  if (!cfg.omni) return value;
+  const media = parseMediaFromContent(Array.isArray(value.content) ? value.content : []);
+  const taskType = first(value.omni_reference_task_type, value.omniReferenceTaskType);
+  // Seedance 2.5 may classify an otherwise "auto" reference-video prompt as
+  // video editing. SDGO then requires duration=-1 and derives the duration
+  // from the selected input video. Apply this only to the provider submission
+  // body so NewAPI's estimate can still use the caller's requested duration.
+  if (media.videos.length && (!taskType || taskType === "auto")) {
+    value.duration = -1;
+  }
+  return value;
 }
 
 function parseMultipart(ctx) {
@@ -659,6 +677,7 @@ export function buildSubmitRequest(ctx) {
   const source = file && uploadedAssetSource(ctx);
   if (file && !source) throw new Error("SDGO 本地图片素材上传未完成，未向上游提交内联真人图片。");
   if (file && source) requestBody = requestWithAssetImage(requestBody, file, source);
+  const body = normalizeImplicitVideoEdit(payloadFor(requestBody, ctx.model, ctx.upstreamModel));
   return {
     url: base(ctx) + "/api/v3/contents/generations/tasks",
     method: "POST",
@@ -667,7 +686,7 @@ export function buildSubmitRequest(ctx) {
       "Content-Type": "application/json",
       Accept: "application/json",
     },
-    body: payloadFor(requestBody, ctx.model, ctx.upstreamModel),
+    body,
   };
 }
 

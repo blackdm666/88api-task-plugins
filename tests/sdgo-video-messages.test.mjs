@@ -17,7 +17,7 @@ function decode(value = {}, model = 'doubao-seedance-2-5-260628') {
 test('declares the SDGO dynamic plugin and official models remain discoverable', () => {
   assert.equal(plugin.meta.key, 'sdgo-video')
   assert.equal(plugin.meta.name, 'SD-Video')
-  assert.equal(plugin.meta.version, '1.1.0')
+  assert.equal(plugin.meta.version, '1.1.1')
   assert.deepEqual(plugin.meta.requiredCapabilities, ['task-preflight@1'])
   assert.equal(plugin.meta.dynamicModels, true)
   assert.deepEqual(plugin.meta.models, [
@@ -405,6 +405,56 @@ test('extracts reference-video pricing from normalized Ark content', () => {
     resolution: '720p',
     video_input: 'none',
   })
+})
+
+test('uses provider-selected duration for implicit Seedance 2.5 video editing', () => {
+  const implicitEdit = decode({
+    prompt: '编辑这段参考视频，保留人物并改变场景',
+    duration: 4,
+    referenceVideos: [video],
+  })
+  assert.equal(implicitEdit.requestBody.duration, 4)
+  assert.equal(implicitEdit.requestBody.ratio, 'adaptive')
+  const submitted = plugin.buildSubmitRequest({
+    model: implicitEdit.model,
+    upstreamModel: implicitEdit.model,
+    requestBody: implicitEdit.requestBody,
+    baseUrl: 'https://sdgo.top',
+    apiKey: 'fixture',
+  })
+  assert.equal(submitted.body.duration, -1)
+
+  const explicitAuto = decode({
+    prompt: '根据这段视频继续创作',
+    duration: 8,
+    referenceVideos: [video],
+    omniReferenceTaskType: 'auto',
+  })
+  assert.equal(explicitAuto.requestBody.duration, 8)
+  const autoSubmit = plugin.buildSubmitRequest({
+    model: explicitAuto.model,
+    upstreamModel: explicitAuto.model,
+    requestBody: explicitAuto.requestBody,
+    baseUrl: 'https://sdgo.top',
+    apiKey: 'fixture',
+  })
+  assert.equal(autoSubmit.body.duration, -1)
+
+  const explicitReference = decode({
+    prompt: '参考这段视频的动作节奏',
+    duration: 8,
+    referenceVideos: [video],
+    omniReferenceTaskType: 'reference',
+  })
+  assert.equal(explicitReference.requestBody.duration, 8)
+  const referenceSubmit = plugin.buildSubmitRequest({
+    model: explicitReference.model,
+    upstreamModel: explicitReference.model,
+    requestBody: explicitReference.requestBody,
+    baseUrl: 'https://sdgo.top',
+    apiKey: 'fixture',
+  })
+  assert.equal(referenceSubmit.body.duration, 8)
 })
 
 test('enforces SDGO documented model and media limits', () => {
