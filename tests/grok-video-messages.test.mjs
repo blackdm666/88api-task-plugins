@@ -141,14 +141,23 @@ test("authenticates relative and absolute Sub2API content without changing the t
   }
 })
 
-test("preserves HEAD and treats explicit default ports as the same origin", () => {
+test("uses GET for protected HEAD and treats explicit default ports as the same origin", () => {
   const request = content("HTTPS://SUB.EXAMPLE.INVALID:443/v1/videos/upstream/content", {
     baseUrl: "https://sub.example.invalid/api",
     clientRequest: { method: "HEAD" },
   })
-  assert.equal(request.method, "HEAD")
+  assert.equal(request.method, "GET")
   assert.equal(request.credentialless, false)
   assert.equal(request.headers.Authorization, "Bearer fixture-secret")
+})
+
+test("preserves HEAD for external credentialless media", () => {
+  const request = content("https://cdn.example.invalid/video.mp4", {
+    clientRequest: { method: "HEAD" },
+  })
+  assert.equal(request.method, "HEAD")
+  assert.equal(request.credentialless, true)
+  assert.equal(request.headers, undefined)
 })
 
 test("never sends the channel key to another hostname, port, or scheme", () => {

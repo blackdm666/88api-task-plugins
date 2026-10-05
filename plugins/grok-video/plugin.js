@@ -216,7 +216,7 @@ export const meta = {
   apiVersion: 1,
   key: "grok-video",
   name: "Grok Video",
-  version: "1.0.3",
+  version: "1.0.4",
   author: { name: "88API" },
   description: {
     en: "Grok Imagine Video through the Sub2API video task API",
@@ -339,7 +339,9 @@ export function buildContentRequest(ctx) {
     if (!apiKey || /[\r\n]/.test(apiKey)) throw new Error("视频下载鉴权不可用，请联系管理员核查渠道配置。");
     return {
       url,
-      method: ctx.clientRequest.method,
+      // Sub2API registers GET only. The host uses the original client HEAD to
+      // suppress the response body and close this upstream stream.
+      method: text(ctx.clientRequest.method).toUpperCase() === "HEAD" ? "GET" : ctx.clientRequest.method,
       headers: { Authorization: "Bearer " + apiKey },
       credentialless: false,
     };

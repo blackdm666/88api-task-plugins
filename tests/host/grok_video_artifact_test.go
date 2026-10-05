@@ -34,6 +34,12 @@ func TestIndependentPluginCatalogueGrokVideoContentHTTP(t *testing.T) {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
+		// Sub2API does not register a HEAD content route. This fixture must not
+		// hide that incompatibility by accepting a generic HTTP server's HEAD.
+		if r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
 		assert.Equal(t, "/v1/videos/upstream/content", r.URL.Path)
 		w.Header().Set("Content-Type", "video/mp4")
 		http.ServeContent(w, r, "fixture.mp4", time.Time{}, bytes.NewReader(payload))
@@ -68,6 +74,7 @@ func TestIndependentPluginCatalogueGrokVideoContentHTTP(t *testing.T) {
 				descriptor, err := adaptor.BuildContentRequest(task, "video", relaychannel.TaskArtifactClientRequest{Method: tc.method})
 				require.NoError(t, err)
 				assert.False(t, descriptor.Credentialless)
+				assert.Equal(t, http.MethodGet, descriptor.Method)
 				assert.Equal(t, "Bearer fixture-secret", descriptor.Headers["Authorization"])
 				recorder := httptest.NewRecorder()
 				c, _ := gin.CreateTestContext(recorder)

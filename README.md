@@ -15,10 +15,13 @@ Minimax-H3 与 XM-Video 的初始独立版本与当时88API镜像和生产自定
 
 ## Grok Video
 
-`grok-video@1.0.3` fixes protected video downloads through Sub2API without a
+`grok-video@1.0.4` fixes protected video downloads through Sub2API without a
 NewAPI image rebuild. Relative and same-origin HTTP(S) result URLs use the
 configured channel Bearer key; external result URLs remain credentialless.
-Ambiguous authorities and missing download credentials fail closed. The
+Ambiguous authorities and missing download credentials fail closed.
+Since Sub2API's content route supports GET only, protected client HEAD requests
+use an upstream GET; the host suppresses the body and closes that stream.
+External anonymous URLs retain HEAD. The
 existing task snapshots, model selection, resolution limits and billing facts
 are unchanged, so earlier `grok-video` tasks can use the corrected reader.
 
