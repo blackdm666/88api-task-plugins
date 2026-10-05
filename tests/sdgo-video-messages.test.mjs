@@ -17,7 +17,7 @@ function decode(value = {}, model = 'doubao-seedance-2-5-260628') {
 test('declares the SDGO dynamic plugin and official models remain discoverable', () => {
   assert.equal(plugin.meta.key, 'sdgo-video')
   assert.equal(plugin.meta.name, 'SD-Video')
-  assert.equal(plugin.meta.version, '1.1.1')
+  assert.equal(plugin.meta.version, '1.1.2')
   assert.deepEqual(plugin.meta.requiredCapabilities, ['task-preflight@1'])
   assert.equal(plugin.meta.dynamicModels, true)
   assert.deepEqual(plugin.meta.models, [
@@ -455,6 +455,34 @@ test('uses provider-selected duration for implicit Seedance 2.5 video editing', 
     apiKey: 'fixture',
   })
   assert.equal(referenceSubmit.body.duration, 8)
+})
+
+test('keeps -1 for the provider but uses a finite duration estimate for billing', () => {
+  const metadataDuration = decode({
+    prompt: 'Metadata duration fixture',
+    metadata: { duration: -1 },
+    referenceVideos: [video],
+  })
+  assert.equal(metadataDuration.requestBody.duration, -1)
+  assert.deepEqual(plugin.extractUsage({ requestBody: metadataDuration.requestBody }), {
+    seconds: 30,
+    resolution: '720p',
+    video_input: 'present',
+  })
+
+  const omittedDuration = decode({
+    prompt: 'Omitted duration fixture',
+    referenceVideos: [video],
+  })
+  assert.equal(omittedDuration.requestBody.duration, -1)
+  assert.equal(plugin.extractUsage({ requestBody: omittedDuration.requestBody }).seconds, 30)
+
+  const metadataFixedDuration = decode({
+    prompt: 'Metadata fixed duration fixture',
+    metadata: { duration: 8 },
+    referenceVideos: [video],
+  })
+  assert.equal(plugin.extractUsage({ requestBody: metadataFixedDuration.requestBody }).seconds, 8)
 })
 
 test('enforces SDGO documented model and media limits', () => {

@@ -18,7 +18,7 @@ func TestIndependentPluginCatalogueSDGOVideoContract(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "sdgo-video", plugin.Meta.Key)
 	assert.Equal(t, "SD-Video", plugin.Meta.Name)
-	assert.Equal(t, "1.1.1", plugin.Meta.Version)
+	assert.Equal(t, "1.1.2", plugin.Meta.Version)
 	assert.True(t, plugin.Meta.DynamicModels)
 	assert.Equal(t, []string{
 		"doubao-seedance-2-0-mini-260615",
@@ -44,6 +44,24 @@ func TestIndependentPluginCatalogueSDGOVideoContract(t *testing.T) {
 	assert.EqualValues(t, -1, requestBody["duration"])
 	assert.Equal(t, "adaptive", requestBody["ratio"])
 	assert.Equal(t, "image_url", requestBody["content"].([]any)[1].(map[string]any)["type"])
+
+	metadataDecoded, err := plugin.Engine.CallPath(context.Background(), "protocols",
+		[]string{"openai_video", "decodeRequest"}, map[string]any{
+			"model": "doubao-seedance-2-5-260628",
+			"body": map[string]any{"kind": "json", "value": map[string]any{
+				"prompt": "Metadata duration fixture",
+				"metadata": map[string]any{"duration": -1},
+				"videos": []any{"asset://video-asset-1"},
+			}},
+		})
+	require.NoError(t, err)
+	metadataRequestBody := metadataDecoded.(map[string]any)["requestBody"].(map[string]any)
+	assert.EqualValues(t, -1, metadataRequestBody["duration"])
+	metadataUsage, err := plugin.Engine.CallPath(context.Background(), "extractUsage", map[string]any{
+		"requestBody": metadataRequestBody,
+	})
+	require.NoError(t, err)
+	assert.EqualValues(t, 30, metadataUsage.(map[string]any)["seconds"])
 
 	assetDecoded, err := plugin.Engine.CallPath(context.Background(), "protocols",
 		[]string{"openai_video", "decodeRequest"}, map[string]any{

@@ -97,7 +97,7 @@ export const meta = {
   apiVersion: 1,
   key: "sdgo-video",
   name: "SD-Video",
-  version: "1.1.1",
+  version: "1.1.2",
   author: { name: "88API" },
   description: {
     en: "Seedance video generation through the SDGO OpenAI-compatible task API",
@@ -757,10 +757,22 @@ export function parseTaskResult(_ctx, value, response) {
 }
 
 function secondsFor(request) {
-  const cfg = modelConfig(first(object(request).model));
-  const seconds = Number(object(request).duration);
+  const req = object(request);
+  const cfg = modelConfig(first(req.model));
+  const metadata = parseMetadata(req.metadata);
+  const rawDuration = req.duration !== undefined
+    ? req.duration
+    : req.seconds !== undefined
+      ? req.seconds
+      : metadata.duration !== undefined
+        ? metadata.duration
+        : metadata.seconds;
+  const seconds = Number(rawDuration);
   if (seconds === -1) return cfg.maxDuration === Number.MAX_SAFE_INTEGER ? DEFAULT_MAX_DURATION : cfg.maxDuration;
-  return Number.isInteger(seconds) && seconds >= (cfg.minDuration || 4) ? Math.min(seconds, cfg.maxDuration) : cfg.defaultDuration;
+  if (Number.isInteger(seconds) && seconds >= (cfg.minDuration || 4)) return Math.min(seconds, cfg.maxDuration);
+  return cfg.defaultDuration === -1
+    ? (cfg.maxDuration === Number.MAX_SAFE_INTEGER ? DEFAULT_MAX_DURATION : cfg.maxDuration)
+    : cfg.defaultDuration;
 }
 
 function resolutionFrom(value) {
