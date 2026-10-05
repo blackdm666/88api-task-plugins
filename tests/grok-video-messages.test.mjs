@@ -114,3 +114,69 @@ test("rejects unsupported resolution, duration, and multiple images", () => {
     images: ["https://example.invalid/1.png", "https://example.invalid/2.png"],
   }), /最多接受一张/)
 })
+
+function content(url, overrides = {}) {
+  return plugin.buildContentRequest({
+    baseUrl: "http://sub2api:8080",
+    apiKey: "fixture-secret",
+    artifactKey: "video",
+    data: { status: "done", video: { url } },
+    clientRequest: { method: "GET" },
+    ...overrides,
+  })
+}
+
+test("authenticates relative and absolute Sub2API content without changing the task snapshot", () => {
+  for (const url of [
+    "/v1/videos/upstream/content",
+    "http://sub2api:8080/v1/videos/upstream/content",
+    "//sub2api:8080/v1/videos/upstream/content",
+  ]) {
+    const data = { status: "done", video: { url } }
+    const request = content(url, { data })
+    assert.equal(request.url, "http://sub2api:8080/v1/videos/upstream/content")
+    assert.equal(request.credentialless, false)
+    assert.deepEqual(request.headers, { Authorization: "Bearer fixture-secret" })
+    assert.deepEqual(data, { status: "done", video: { url } })
+  }
+})
+
+test("preserves HEAD and treats explicit default ports as the same origin", () => {
+  const request = content("HTTPS://SUB.EXAMPLE.INVALID:443/v1/videos/upstream/content", {
+    baseUrl: "https://sub.example.invalid/api",
+    clientRequest: { method: "HEAD" },
+  })
+  assert.equal(request.method, "HEAD")
+  assert.equal(request.credentialless, false)
+  assert.equal(request.headers.Authorization, "Bearer fixture-secret")
+})
+
+test("never sends the channel key to another hostname, port, or scheme", () => {
+  for (const url of [
+    "https://cdn.example.invalid/video.mp4?signature=fixture",
+    "//cdn.example.invalid/video.mp4",
+    "http://sub2api:8081/video.mp4",
+    "https://sub2api:8080/video.mp4",
+    "http://sub2api.evil.invalid:8080/video.mp4",
+  ]) {
+    const request = content(url)
+    assert.equal(request.credentialless, true)
+    assert.equal(request.headers, undefined)
+    assert.equal(request.body, undefined)
+    assert.ok(!JSON.stringify(request).includes("fixture-secret"))
+  }
+})
+
+test("fails closed on malformed result authorities and missing same-origin credentials", () => {
+  for (const url of [
+    "http://sub2api:8080@evil.invalid/video.mp4",
+    "http://sub2api:8080\\@evil.invalid/video.mp4",
+    "http://sub2api%2eevil.invalid:8080/video.mp4",
+    "http://sub2api:99999/video.mp4",
+    "http://sub2api:8080/video.mp4\r\nX-Test: injected",
+  ]) {
+    assert.throws(() => content(url), /视频地址/)
+  }
+  assert.throws(() => content("/v1/videos/upstream/content", { apiKey: "" }), /鉴权/)
+  assert.throws(() => content("/v1/videos/upstream/content", { artifactKey: "poster" }), /暂不可用/)
+})

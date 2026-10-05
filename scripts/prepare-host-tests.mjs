@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process'
 import path from 'node:path'
 
 const root = process.cwd()
-const host = path.join(root, '.host')
+const host = path.join(root, process.env.PLUGIN_TEST_HOST_DIR || '.host')
 const lock = JSON.parse(await readFile(path.join(root, 'host.lock.json'), 'utf8'))
 if (!/^[a-f0-9]{40}$/.test(lock.commit)) throw new Error('Host commit must be pinned')
 const revision = spawnSync('git', ['-C', host, 'rev-parse', 'HEAD'], { encoding: 'utf8' })
@@ -30,6 +30,8 @@ await copyFile(path.join(root, 'tests', 'host', 'gx_video_contract_test.go'),
   path.join(host, 'pkg', 'jsplugin', 'independent_gx_video_contract_test.go'))
 await copyFile(path.join(root, 'tests', 'host', 'sdgo_video_contract_test.go'),
   path.join(host, 'pkg', 'jsplugin', 'independent_sdgo_video_contract_test.go'))
+await copyFile(path.join(root, 'tests', 'host', 'grok_video_artifact_test.go'),
+  path.join(host, 'controller', 'independent_grok_video_artifact_test.go'))
 // The pinned host's historical XinMeng test asserted an internal English
 // error string. The plugin now exposes Chinese guidance to canvas users, so
 // align that sandbox-only assertion with the intentional public message.

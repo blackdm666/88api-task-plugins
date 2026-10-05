@@ -13,6 +13,19 @@
 
 Minimax-H3 与 XM-Video 的初始独立版本与当时88API镜像和生产自定义插件源码一致，仅迁移维护及发布位置；Minimax-H3 Async 是另行新增的插件。
 
+## Grok Video
+
+`grok-video@1.0.3` fixes protected video downloads through Sub2API without a
+NewAPI image rebuild. Relative and same-origin HTTP(S) result URLs use the
+configured channel Bearer key; external result URLs remain credentialless.
+Ambiguous authorities and missing download credentials fail closed. The
+existing task snapshots, model selection, resolution limits and billing facts
+are unchanged, so earlier `grok-video` tasks can use the corrected reader.
+
+This is a content-proxy fix, not an object-storage implementation. Video
+archiving and R2 delivery remain the host's responsibility; upgrading this
+plugin does not fix a host's relative/absolute URL cache-mapping mismatch.
+
 ## GX-Video
 
 `gx-video` is the independent task-plugin adapter for the GX Seedance-native

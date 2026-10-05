@@ -178,6 +178,18 @@ function absoluteURL(baseUrl, value) {
   return base + "/" + raw.replace(/^\/+/, "");
 }
 
+// The host sandbox has no URL global. Fail closed on ambiguous authorities
+// before deciding whether a download may receive the channel credential.
+function httpOrigin(value) {
+  if (/[\u0000-\u0020\u007f\\#]/.test(value)) return "";
+  const match = /^(https?):\/\/(\[[0-9a-f:.]+\]|[a-z0-9.-]+)(?::([0-9]+))?(?:[/?]|$)/i.exec(value);
+  if (!match) return "";
+  const scheme = match[1].toLowerCase();
+  const port = match[3] ? Number(match[3]) : (scheme === "https" ? 443 : 80);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) return "";
+  return scheme + "://" + match[2].toLowerCase() + ":" + port;
+}
+
 function progressFor(value, terminal) {
   if (terminal) return "100%";
   const number = Number(String(value === undefined ? 0 : value).replace(/%$/, ""));
@@ -204,7 +216,7 @@ export const meta = {
   apiVersion: 1,
   key: "grok-video",
   name: "Grok Video",
-  version: "1.0.2",
+  version: "1.0.3",
   author: { name: "88API" },
   description: {
     en: "Grok Imagine Video through the Sub2API video task API",
@@ -319,6 +331,20 @@ export function listArtifacts(task) {
 export function buildContentRequest(ctx) {
   const url = absoluteURL(ctx.baseUrl, resultURL(ctx.data));
   if (ctx.artifactKey !== "video" || !url) throw new Error("视频结果暂不可用，请稍后重试。");
+  const origin = httpOrigin(url);
+  const channelOrigin = httpOrigin(base(ctx));
+  if (!origin || !channelOrigin) throw new Error("视频地址格式不正确，请联系管理员核查。");
+  if (origin === channelOrigin) {
+    const apiKey = text(ctx.apiKey);
+    if (!apiKey || /[\r\n]/.test(apiKey)) throw new Error("视频下载鉴权不可用，请联系管理员核查渠道配置。");
+    return {
+      url,
+      method: ctx.clientRequest.method,
+      headers: { Authorization: "Bearer " + apiKey },
+      credentialless: false,
+    };
+  }
+  // Signed external media URLs remain anonymous; never forward the API key.
   return { url, method: ctx.clientRequest.method, credentialless: true };
 }
 
