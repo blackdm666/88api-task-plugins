@@ -4,6 +4,7 @@
 
 | 插件 | 稳定标识 | 初始独立版本 |
 | --- | --- | --- |
+| Grok Video | `grok-video` | `1.0.0` |
 | GX-Video | `gx-video` | `1.0.0` |
 | Minimax-H3 | `minimax-h3` | `2.0.0` |
 | Minimax-H3 Async | `minimax-h3-async` | `1.0.0` |
