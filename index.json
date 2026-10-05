@@ -98,8 +98,15 @@
       "protocols": [
         "openai_video"
       ],
-      "latest": "1.1.2",
+      "latest": "1.1.3",
       "versions": [
+        {
+          "version": "1.1.3",
+          "path": "plugins/sdgo-video/1.1.3/plugin.js",
+          "sha256": "fe92c3bee679e8b80b9c02f18dfae7fe9faa335ed1aa4b6347af028cd7c75b9e",
+          "minApiVersion": 1,
+          "kind": "task"
+        },
         {
           "version": "1.1.2",
           "path": "plugins/sdgo-video/1.1.2/plugin.js",
