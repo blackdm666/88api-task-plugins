@@ -12,8 +12,23 @@ function decode(value = {}) {
 
 test("declares Grok model and resolution usage schema", () => {
   assert.equal(plugin.meta.key, "grok-video")
-  assert.deepEqual(plugin.meta.models, ["grok-imagine-video-1.5"])
+  assert.deepEqual(plugin.meta.models, ["grok-imagine-video-1.5", "grok-imagine-video"])
   assert.deepEqual(plugin.meta.usageSchema.resolution.enum, ["480p", "720p", "1080p"])
+})
+
+test("keeps the base Grok model limited to 480p and 720p", () => {
+  const decoded = plugin.protocols.openai_video.decodeRequest({
+    model: "grok-imagine-video",
+    body: { kind: "json", value: { prompt: "Fixture prompt", resolution: "720p" } },
+  })
+  assert.equal(decoded.requestBody.resolution, "720p")
+  assert.throws(
+    () => plugin.protocols.openai_video.decodeRequest({
+      model: "grok-imagine-video",
+      body: { kind: "json", value: { prompt: "Fixture prompt", resolution: "1080p" } },
+    }),
+    /不支持该分辨率/,
+  )
 })
 
 test("normalizes resolution, duration, ratio, and image for Sub2API", () => {

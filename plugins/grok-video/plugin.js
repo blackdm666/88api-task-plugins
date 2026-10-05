@@ -1,10 +1,12 @@
 const MODEL = "grok-imagine-video-1.5";
+const BASE_MODEL = "grok-imagine-video";
 const DEFAULT_DURATION = 8;
 const MIN_DURATION = 1;
 const MAX_DURATION = 15;
 const DEFAULT_RATIO = "16:9";
 const RATIOS = ["16:9", "9:16", "1:1", "4:3", "3:4", "3:2", "2:3"];
 const RESOLUTIONS = ["480p", "720p", "1080p"];
+const BASE_RESOLUTIONS = ["480p", "720p"];
 
 function object(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
@@ -62,13 +64,16 @@ function durationFor(request) {
   return duration;
 }
 
-function resolutionFor(request) {
+function resolutionFor(request, model = MODEL) {
   const metadata = metadataFor(request.metadata);
   let resolution = first(request.resolution, request.quality, request.vquality, metadata.resolution).toLowerCase();
   if (!resolution) resolution = "720p";
   if (!resolution.endsWith("p")) resolution += "p";
-  if (!RESOLUTIONS.includes(resolution)) {
-    throw new Error("当前模型不支持该分辨率，请选择：480p、720p 或 1080p。");
+  const supported = model === BASE_MODEL ? BASE_RESOLUTIONS : RESOLUTIONS;
+  if (!supported.includes(resolution)) {
+    throw new Error(
+      "当前模型不支持该分辨率，请选择：" + supported.join("、") + "。",
+    );
   }
   return resolution;
 }
@@ -110,7 +115,7 @@ function imageFor(request) {
 
 function normalizeRequest(request, model) {
   const duration = durationFor(request);
-  const resolution = resolutionFor(request);
+  const resolution = resolutionFor(request, model);
   const aspectRatio = ratioFor(request);
   const image = imageFor(request);
   const prompt = text(request.prompt);
@@ -199,13 +204,13 @@ export const meta = {
   apiVersion: 1,
   key: "grok-video",
   name: "Grok Video",
-  version: "1.0.1",
+  version: "1.0.2",
   author: { name: "88API" },
   description: {
     en: "Grok Imagine Video through the Sub2API video task API",
     zh: "通过 Sub2API 视频任务接口接入 Grok Imagine Video",
   },
-  models: [MODEL],
+  models: [MODEL, BASE_MODEL],
   fetchMode: "per_task",
   protocols: ["openai_video"],
   usageSchema: {
@@ -250,7 +255,7 @@ export function parseSubmitResponse(ctx, response) {
   return {
     taskId,
     taskData: response.body,
-    state: { resolution: resolutionFor(ctx.requestBody || {}) },
+    state: { resolution: resolutionFor(ctx.requestBody || {}, ctx.upstreamModel || ctx.model || MODEL) },
   };
 }
 
@@ -290,7 +295,7 @@ export function extractUsage(ctx) {
   const request = ctx.requestBody || {};
   return {
     seconds: durationFor(request),
-    resolution: resolutionFor(request),
+    resolution: resolutionFor(request, ctx.upstreamModel || ctx.model || request.model || MODEL),
   };
 }
 
