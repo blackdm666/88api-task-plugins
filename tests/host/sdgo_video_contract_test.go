@@ -57,7 +57,7 @@ func TestIndependentPluginCatalogueSDGOVideoContract(t *testing.T) {
 	require.NoError(t, err)
 	metadataRequestBody := metadataDecoded.(map[string]any)["requestBody"].(map[string]any)
 	assert.EqualValues(t, -1, metadataRequestBody["duration"])
-	metadataUsage, err := plugin.Engine.CallPath(context.Background(), "extractUsage", map[string]any{
+	metadataUsage, err := plugin.Engine.CallPath(context.Background(), []string{"extractUsage"}, map[string]any{
 		"requestBody": metadataRequestBody,
 	})
 	require.NoError(t, err)
