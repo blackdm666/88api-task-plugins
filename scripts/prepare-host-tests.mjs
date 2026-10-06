@@ -20,6 +20,11 @@ for (const key of lock.plugins) {
     // they are not silently added to the host's built-in inventory.
   }
 }
+// Keep new independent plugins available to the host-side catalogue and
+// contract tests without adding them to the host's built-in inventory.
+await mkdir(path.join(host, 'plugins', 'seedream-pro'), { recursive: true })
+await copyFile(path.join(root, 'plugins', 'seedream-pro', 'plugin.js'),
+  path.join(host, 'plugins', 'seedream-pro', 'plugin.js'))
 await copyFile(path.join(root, 'tests', 'host', 'catalogue_contract_test.go'),
   path.join(host, 'pkg', 'jsplugin', 'independent_catalogue_test.go'))
 await copyFile(path.join(root, 'tests', 'host', 'xm_video_vs25_test.go'),
@@ -30,6 +35,8 @@ await copyFile(path.join(root, 'tests', 'host', 'gx_video_contract_test.go'),
   path.join(host, 'pkg', 'jsplugin', 'independent_gx_video_contract_test.go'))
 await copyFile(path.join(root, 'tests', 'host', 'sdgo_video_contract_test.go'),
   path.join(host, 'pkg', 'jsplugin', 'independent_sdgo_video_contract_test.go'))
+await copyFile(path.join(root, 'tests', 'host', 'seedream_pro_contract_test.go'),
+  path.join(host, 'pkg', 'jsplugin', 'independent_seedream_pro_contract_test.go'))
 await copyFile(path.join(root, 'tests', 'host', 'grok_video_artifact_test.go'),
   path.join(host, 'controller', 'independent_grok_video_artifact_test.go'))
 // The pinned host's historical XinMeng test asserted an internal English

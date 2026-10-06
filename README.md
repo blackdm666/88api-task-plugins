@@ -6,12 +6,20 @@
 | --- | --- | --- |
 | Grok Video | `grok-video` | `1.0.2` |
 | GX-Video | `gx-video` | `1.0.0` |
+| Seedream Pro | `seedream-pro` | `1.1.7` |
 | Minimax-H3 | `minimax-h3` | `2.0.0` |
 | Minimax-H3 Async | `minimax-h3-async` | `1.0.0` |
 | SD-Video | `sdgo-video` | `1.0.3` |
 | XM-Video | `xm-video` | `3.0.0` |
 
 Minimax-H3 与 XM-Video 的初始独立版本与当时88API镜像和生产自定义插件源码一致，仅迁移维护及发布位置；Minimax-H3 Async 是另行新增的插件。
+
+## Seedream Pro
+
+`seedream-pro@1.1.7` keeps the Seedream 5.0 Pro task protocol and 1K/2K
+billing schema while omitting public price examples. The 1K/2K billing
+expression remains configured in NewAPI pricing; this metadata change does
+not alter request handling or task billing.
 
 ## Grok Video
 
