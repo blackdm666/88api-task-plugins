@@ -8,6 +8,35 @@ const RATIOS = ["16:9", "9:16", "1:1", "4:3", "3:4", "3:2", "2:3"];
 const RESOLUTIONS = ["480p", "720p", "1080p"];
 const BASE_RESOLUTIONS = ["480p", "720p"];
 
+function usageSchema(resolutions) {
+  return {
+    seconds: {
+      type: "number",
+      unit: "second",
+      description: { en: "Video generation unit price", zh: "视频生成单价" },
+    },
+    resolution: {
+      enum: resolutions,
+      enumLabels: Object.fromEntries(
+        resolutions.map((value) => [value, { en: value, zh: value }]),
+      ),
+      description: { en: "Output video resolution", zh: "输出视频分辨率" },
+    },
+  };
+}
+
+function usageExamples(resolutions) {
+  return resolutions.map((resolution) => ({
+    label: `8s · ${resolution}`,
+    facts: { seconds: 8, resolution },
+  }));
+}
+
+const DEFAULT_USAGE_SCHEMA = usageSchema(RESOLUTIONS);
+const DEFAULT_USAGE_EXAMPLES = usageExamples(RESOLUTIONS);
+const BASE_USAGE_SCHEMA = usageSchema(BASE_RESOLUTIONS);
+const BASE_USAGE_EXAMPLES = usageExamples(BASE_RESOLUTIONS);
+
 function object(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
 }
@@ -216,30 +245,34 @@ export const meta = {
   apiVersion: 1,
   key: "grok-video",
   name: "Grok Video",
-  version: "1.0.4",
+  version: "1.1.0",
   author: { name: "88API" },
   description: {
     en: "Grok Imagine Video through the Sub2API video task API",
     zh: "通过 Sub2API 视频任务接口接入 Grok Imagine Video",
   },
   models: [MODEL, BASE_MODEL],
+  // Keep the current models profiled for accurate capability metadata while
+  // allowing future Sub2API Grok model names to bind through the same task
+  // protocol without another plugin release.
+  dynamicModels: true,
   fetchMode: "per_task",
   protocols: ["openai_video"],
-  usageSchema: {
-    seconds: {
-      type: "number",
-      unit: "second",
-      description: { en: "Video generation unit price", zh: "视频生成单价" },
+  // Unknown dynamic models use the superset profile. Model-specific profiles
+  // below prevent the base model from advertising unsupported 1080p.
+  usageSchema: DEFAULT_USAGE_SCHEMA,
+  usageExamples: DEFAULT_USAGE_EXAMPLES,
+  usageProfiles: [
+    {
+      models: [BASE_MODEL],
+      schema: BASE_USAGE_SCHEMA,
+      examples: BASE_USAGE_EXAMPLES,
     },
-    resolution: {
-      enum: RESOLUTIONS,
-      enumLabels: Object.fromEntries(RESOLUTIONS.map((value) => [value, { en: value, zh: value }])),
-      description: { en: "Output video resolution", zh: "输出视频分辨率" },
+    {
+      models: [MODEL],
+      schema: DEFAULT_USAGE_SCHEMA,
+      examples: DEFAULT_USAGE_EXAMPLES,
     },
-  },
-  usageExamples: [
-    { label: "8s · 720p", facts: { seconds: 8, resolution: "720p" } },
-    { label: "8s · 1080p", facts: { seconds: 8, resolution: "1080p" } },
   ],
 };
 

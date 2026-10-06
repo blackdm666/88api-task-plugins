@@ -13,7 +13,22 @@ function decode(value = {}) {
 test("declares Grok model and resolution usage schema", () => {
   assert.equal(plugin.meta.key, "grok-video")
   assert.deepEqual(plugin.meta.models, ["grok-imagine-video-1.5", "grok-imagine-video"])
+  assert.equal(plugin.meta.dynamicModels, true)
   assert.deepEqual(plugin.meta.usageSchema.resolution.enum, ["480p", "720p", "1080p"])
+  assert.deepEqual(
+    plugin.meta.usageProfiles.find((profile) => profile.models.includes("grok-imagine-video")).schema.resolution.enum,
+    ["480p", "720p"],
+  )
+})
+
+test("accepts an unknown future Grok model through the dynamic protocol", () => {
+  const decoded = plugin.protocols.openai_video.decodeRequest({
+    model: "grok-imagine-video-2",
+    body: { kind: "json", value: { prompt: "Fixture prompt", resolution: "1080p" } },
+  })
+  assert.equal(decoded.model, "grok-imagine-video-2")
+  assert.equal(decoded.requestBody.model, "grok-imagine-video-2")
+  assert.equal(decoded.requestBody.resolution, "1080p")
 })
 
 test("keeps the base Grok model limited to 480p and 720p", () => {
