@@ -17,7 +17,7 @@ export const meta = {
     en: "Seedream 5.0 Pro image generation",
     zh: "Seedream 5.0 Pro 图片生成",
   },
-  version: "1.1.7",
+  version: "1.1.8",
   author: { name: "88API" },
   models: [PUBLIC_MODEL],
   fetchMode: "per_task",

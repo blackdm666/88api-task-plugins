@@ -6,7 +6,7 @@
 | --- | --- | --- |
 | Grok Video | `grok-video` | `1.0.2` |
 | GX-Video | `gx-video` | `1.0.0` |
-| Seedream Pro | `seedream-pro` | `1.1.7` |
+| Seedream Pro | `seedream-pro` | `1.1.8` |
 | Minimax-H3 | `minimax-h3` | `2.0.0` |
 | Minimax-H3 Async | `minimax-h3-async` | `1.0.0` |
 | SD-Video | `sdgo-video` | `1.0.3` |
