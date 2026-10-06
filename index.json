@@ -278,8 +278,15 @@
           ]
         }
       ],
-      "latest": "1.1.7",
+      "latest": "1.1.8",
       "versions": [
+        {
+          "version": "1.1.8",
+          "path": "plugins/seedream-pro/1.1.8/plugin.js",
+          "sha256": "15973146c64b6607ab5b40a8f70517e351801d42310fd65bcb82fb8ba1cd894b",
+          "minApiVersion": 1,
+          "kind": "task"
+        },
         {
           "version": "1.1.7",
           "path": "plugins/seedream-pro/1.1.7/plugin.js",
