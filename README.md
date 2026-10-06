@@ -15,6 +15,12 @@ Minimax-H3 与 XM-Video 的初始独立版本与当时88API镜像和生产自定
 
 ## Grok Video
 
+`grok-video@1.1.1` preserves the complete upstream error body as the task
+failure reason. NewAPI still wraps that reason in its own task/API response
+because the task-plugin contract owns task lifecycle and forbids a plugin from
+returning an arbitrary client response; the upstream JSON content itself is no
+longer reduced to only its `message` field.
+
 `grok-video@1.0.4` fixes protected video downloads through Sub2API without a
 NewAPI image rebuild. Relative and same-origin HTTP(S) result URLs use the
 configured channel Bearer key; external result URLs remain credentialless.

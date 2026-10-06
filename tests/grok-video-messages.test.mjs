@@ -110,6 +110,50 @@ test("builds submit/query and settles from the Sub2API response", () => {
   )
 })
 
+test("returns the upstream submit error body instead of reducing it to message", () => {
+  const upstream = {
+    code: "insufficient_balance",
+    message: "余额不足",
+    request_id: "req_fixture",
+    details: { required: 1, available: 0 },
+  }
+  assert.throws(
+    () => plugin.parseSubmitResponse(
+      { requestBody: {} },
+      { statusCode: 400, body: upstream },
+    ),
+    (error) => error.message === JSON.stringify(upstream),
+  )
+})
+
+test("returns the upstream polling error body as the task failure reason", () => {
+  const upstream = {
+    code: "content_policy",
+    message: "内容不符合要求",
+    request_id: "req_fixture",
+  }
+  assert.deepEqual(
+    plugin.parseTaskResult(
+      { baseUrl: "https://sub.example.invalid" },
+      upstream,
+      { status: 400 },
+    ),
+    { status: "FAILURE", progress: "100%", reason: JSON.stringify(upstream) },
+  )
+  assert.deepEqual(
+    plugin.parseTaskResult(
+      { baseUrl: "https://sub.example.invalid" },
+      { status: "failed", error: upstream },
+      { status: 200 },
+    ),
+    {
+      status: "FAILURE",
+      progress: "100%",
+      reason: JSON.stringify({ status: "failed", error: upstream }),
+    },
+  )
+})
+
 test("resolves relative result URLs without relying on unavailable URL global", () => {
   const result = plugin.parseTaskResult(
     { baseUrl: "https://sub.example.invalid/api" },
