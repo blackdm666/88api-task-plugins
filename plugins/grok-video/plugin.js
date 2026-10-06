@@ -177,18 +177,24 @@ function taskBody(value) {
   return object(body.data);
 }
 
-function upstreamErrorContent(value) {
-  if (typeof value === "string") return value;
-  if (value === undefined || value === null) return "";
-  try {
-    return JSON.stringify(value);
-  } catch (_error) {
-    return String(value);
-  }
-}
-
-function errorContent(value) {
-  return upstreamErrorContent(value) || "视频生成失败，请稍后重试。";
+function errorMessage(value) {
+  if (typeof value === "string") return text(value) || "视频生成失败，请稍后重试。";
+  const raw = object(value);
+  const body = taskBody(value);
+  const error = object(body.error);
+  return first(
+    error.message,
+    typeof body.error === "string" ? body.error : "",
+    body.message,
+    body.detail,
+    body.error_description,
+    body.reason,
+    raw.message,
+    raw.detail,
+    raw.error_description,
+    raw.reason,
+    "视频生成失败，请稍后重试。",
+  );
 }
 
 function resultURL(value) {
@@ -254,7 +260,7 @@ export const meta = {
   apiVersion: 1,
   key: "grok-video",
   name: "Grok Video",
-  version: "1.1.1",
+  version: "1.1.2",
   author: { name: "88API" },
   description: {
     en: "Grok Imagine Video through the Sub2API video task API",
@@ -307,7 +313,7 @@ export function parseSubmitResponse(ctx, response) {
     body.error ||
     ["failed", "cancelled", "expired"].includes(text(body.status).toLowerCase())
   ) {
-    throw new Error(errorContent(response.body));
+    throw new Error(errorMessage(response.body));
   }
   const taskId = first(body.request_id, body.id, body.task_id);
   if (!taskId) throw new Error("视频服务未返回任务编号，请联系管理员确认是否已受理，勿重复提交。");
@@ -330,7 +336,7 @@ export function parseTaskResult(ctx, value, response) {
   const body = taskBody(value);
   const httpStatus = Number(object(response).status);
   if (httpStatus >= 400 && httpStatus < 500) {
-    return { status: "FAILURE", progress: "100%", reason: errorContent(value) };
+    return { status: "FAILURE", progress: "100%", reason: errorMessage(value) };
   }
   const status = text(body.status).toLowerCase();
   if (["queued", "pending"].includes(status)) {
@@ -345,7 +351,7 @@ export function parseTaskResult(ctx, value, response) {
     return { status: "SUCCESS", progress: "100%", url };
   }
   if (["failed", "cancelled", "expired"].includes(status)) {
-    return { status: "FAILURE", progress: "100%", reason: errorContent(value) };
+    return { status: "FAILURE", progress: "100%", reason: errorMessage(value) };
   }
   return { status: "UNKNOWN", reason: "暂时无法识别视频任务状态，请稍后查询，无需重新提交。" };
 }

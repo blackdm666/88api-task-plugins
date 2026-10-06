@@ -110,7 +110,7 @@ test("builds submit/query and settles from the Sub2API response", () => {
   )
 })
 
-test("returns the upstream submit error body instead of reducing it to message", () => {
+test("extracts the upstream submit error text for the user", () => {
   const upstream = {
     code: "insufficient_balance",
     message: "余额不足",
@@ -122,11 +122,11 @@ test("returns the upstream submit error body instead of reducing it to message",
       { requestBody: {} },
       { statusCode: 400, body: upstream },
     ),
-    (error) => error.message === JSON.stringify(upstream),
+    (error) => error.message === "余额不足",
   )
 })
 
-test("returns the upstream polling error body as the task failure reason", () => {
+test("extracts the upstream polling error text as the task failure reason", () => {
   const upstream = {
     code: "content_policy",
     message: "内容不符合要求",
@@ -138,7 +138,7 @@ test("returns the upstream polling error body as the task failure reason", () =>
       upstream,
       { status: 400 },
     ),
-    { status: "FAILURE", progress: "100%", reason: JSON.stringify(upstream) },
+    { status: "FAILURE", progress: "100%", reason: "内容不符合要求" },
   )
   assert.deepEqual(
     plugin.parseTaskResult(
@@ -149,8 +149,26 @@ test("returns the upstream polling error body as the task failure reason", () =>
     {
       status: "FAILURE",
       progress: "100%",
-      reason: JSON.stringify({ status: "failed", error: upstream }),
+      reason: "内容不符合要求",
     },
+  )
+})
+
+test("supports plain-text and HTTP submit errors", () => {
+  assert.throws(
+    () => plugin.parseSubmitResponse(
+      { requestBody: {} },
+      { statusCode: 502, body: "上游服务暂时不可用" },
+    ),
+    (error) => error.message === "上游服务暂时不可用",
+  )
+  assert.deepEqual(
+    plugin.parseTaskResult(
+      { baseUrl: "https://sub.example.invalid" },
+      { detail: "任务被上游拒绝" },
+      { status: 400 },
+    ),
+    { status: "FAILURE", progress: "100%", reason: "任务被上游拒绝" },
   )
 })
 
