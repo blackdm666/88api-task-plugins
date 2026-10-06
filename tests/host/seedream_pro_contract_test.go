@@ -16,7 +16,7 @@ func TestIndependentPluginCatalogueSeedreamProContract(t *testing.T) {
 	plugin, err := NewRegistry().Register(string(source), Options{})
 	require.NoError(t, err)
 	assert.Equal(t, "seedream-pro", plugin.Meta.Key)
-	assert.Equal(t, "1.1.7", plugin.Meta.Version)
+	assert.Equal(t, "1.1.8", plugin.Meta.Version)
 	assert.Empty(t, plugin.Meta.UsageExamples)
 
 	decoded, err := plugin.Engine.CallPath(context.Background(), "protocols",
