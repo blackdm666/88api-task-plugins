@@ -17,10 +17,33 @@ function driver(value = {}) {
 function completed(part = { type: "video", mime_type: "video/mp4", data: "dmlkZW8=" }) {
   return { id: "v1_fixture", status: "completed", steps: [{ type: "model_output", content: [part] }] };
 }
+function mp4(seconds, resolution = "720p", version = 0) {
+  const atom = (type, ...parts) => {
+    const body = Buffer.concat(parts), header = Buffer.alloc(8);
+    header.writeUInt32BE(body.length + 8); header.write(type, 4);
+    return Buffer.concat([header, body]);
+  };
+  const mdhd = Buffer.alloc(version ? 32 : 24);
+  mdhd[0] = version;
+  const time = version ? 20 : 12;
+  mdhd.writeUInt32BE(1000, time);
+  if (version) mdhd.writeBigUInt64BE(BigInt(seconds * 1000), time + 4);
+  else mdhd.writeUInt32BE(seconds * 1000, time + 4);
+  const hdlr = Buffer.alloc(24); hdlr.write("vide", 8);
+  const tkhd = Buffer.alloc(84);
+  const [width, height] = { "360p": [640, 360], "720p": [1280, 720], "1080p": [1920, 1080], "4k": [3840, 2160] }[resolution];
+  tkhd.writeUInt32BE(width * 65536, 76); tkhd.writeUInt32BE(height * 65536, 80);
+  return Buffer.concat([
+    atom("ftyp", Buffer.from("isom0000")),
+    // mdat is deliberately not interpreted, even with fake metadata markers.
+    atom("mdat", Buffer.from("fake-mvhd-mdhd-never-read")),
+    atom("moov", atom("mvhd", mdhd), atom("trak", atom("tkhd", tkhd), atom("mdia", atom("mdhd", mdhd), atom("hdlr", hdlr)))),
+  ]).toString("base64");
+}
 
 test("QA manifest does not intercept production Vertex, Veo or Omni models", () => {
   assert.equal(plugin.meta.key, "vertex-omni");
-  assert.equal(plugin.meta.version, "1.0.1");
+  assert.equal(plugin.meta.version, "1.1.0");
   assert.deepEqual(plugin.meta.models, [model]);
   assert.equal(plugin.meta.channelTypes, undefined);
   assert.equal(plugin.meta.dynamicModels, undefined);
@@ -46,6 +69,7 @@ test("bounded usage and Interactions wire agree, including all supported duratio
     assert.equal(request.body.background, true);
     assert.equal(request.body.store, true);
     assert.equal(request.body.stream, false);
+    assert.equal(request.body.generation_config.video_config.task, "text_to_video");
     assert.deepEqual(request.body.input, [{ type: "user_input", content: [{ type: "text", text: "Fixture" }] }]);
     const usage = plugin.extractUsage(ctx);
     assert.deepEqual(request.body.response_format, [{
@@ -66,10 +90,11 @@ test("invalid billing multipliers, conflicting aliases and hidden wire overrides
   }
   for (const value of [
     { duration: 3, seconds: 4 }, { duration: 3, metadata: { durationSeconds: 8 } },
-    { size: "720x1280", aspect_ratio: "16:9" }, { size: "1920x1080" },
-    { n: 2 }, { n: null }, { metadata: { candidate_count: 3 } }, { resolution: "1080p" },
-    { metadata: { resolution: "4k" } }, { response_format: [] }, { generation_config: {} },
+    { size: "720x1280", aspect_ratio: "16:9" }, { size: "1280x1280" },
+    { n: 2 }, { n: null }, { metadata: { candidate_count: 3 } }, { resolution: "8k" },
+    { response_format: [] }, { generation_config: {} },
     { background: false }, { store: false }, { stream: true }, { model: "veo-3.1" },
+    { task: "unknown" }, { audios: ["data:audio/mpeg;base64,YQ=="] },
   ]) assert.throws(() => decode(value));
   for (const value of [{ duration: 11 }, { duration: 4, seconds: 3 }, { n: 100 }]) {
     assert.throws(() => plugin.extractUsage({ model, requestBody: { prompt: "Fixture", ...value } }));
@@ -83,19 +108,116 @@ test("image/video references use documented typed parts without silently downloa
     images: ["data:image/png;base64,aW1hZ2U=", "gs://fixture-bucket/image.webp"],
     metadata: { previous_interaction_id: "v1_previous", output_gcs_uri: "gs://fixture-bucket/out/" },
   }));
-  assert.equal(request.action, "video_to_video");
+  assert.equal(request.action, "reference_to_video");
   assert.deepEqual(request.body.input[0].content.map(part => part.type), ["video", "image", "image", "text"]);
   assert.equal(request.body.input[0].content[0].data, "dmlkZW8=");
   assert.equal(request.body.input[0].content[2].uri, "gs://fixture-bucket/image.webp");
   assert.equal(request.body.previous_interaction_id, "v1_previous");
   assert.equal(request.body.response_format[0].delivery, "uri");
+  assert.equal(request.body.generation_config.video_config.task, "reference_to_video");
   for (const value of [
-    { images: "not-array" }, { videos: ["gs://fixture-bucket/a.mp4", "gs://fixture-bucket/b.mp4"] },
+    { images: "not-array" }, { videos: Array(4).fill("gs://fixture-bucket/a.mp4") },
     { images: Array(11).fill("gs://fixture-bucket/a.png") },
     { images: ["https://assets.example.invalid/a.png"] },
     { videos: ["http://127.0.0.1/input.mp4"] }, { image: "data:image/svg+xml;base64,eA==" },
     { image: "data:image/png;base64,%%%" }, { videos: ["data:video/mp4;base64,YQ"] },
     { metadata: { previous_interaction_id: "../bad" } },
+  ]) assert.throws(() => decode(value));
+});
+
+test("official Omni modes, sampling, frame roles, and total-duration extension billing are explicit", () => {
+  const highQuality = plugin.buildSubmitRequest(driver({
+    duration: 10, resolution: "4k", temperature: 0.4, top_p: 0.8,
+  }));
+  assert.equal(highQuality.body.response_format[0].resolution, "4k");
+  assert.deepEqual(highQuality.body.generation_config, {
+    video_config: { task: "text_to_video" }, temperature: 0.4, top_p: 0.8,
+  });
+  assert.deepEqual(plugin.extractUsage({ model, requestBody: decode({
+    duration: 10, resolution: "4k", temperature: 0.4, top_p: 0.8,
+  }).requestBody }), { seconds: 10, resolution: "4k" });
+
+  const reference = plugin.buildSubmitRequest(driver({
+    task: "reference_to_video",
+    videos: ["data:video/mp4;base64,dmlkZW8=", "data:video/mp4;base64,dmlkZW8=", "data:video/mp4;base64,dmlkZW8="],
+  }));
+  assert.equal(reference.body.input[0].content.filter(part => part.type === "video").length, 3);
+  assert.equal(reference.body.generation_config.video_config.task, "reference_to_video");
+
+  const frames = plugin.buildSubmitRequest(driver({
+    task: "image_to_video",
+    first_frame: "data:image/png;base64,YQ==",
+    last_frame: "data:image/png;base64,Yg==",
+  }));
+  assert.deepEqual(frames.body.input[0].content.slice(0, 2).map(part => part.data), ["YQ==", "Yg=="]);
+  assert.ok(frames.body.input[0].content.every(part => part.role === undefined));
+  assert.match(frames.body.input[0].content[2].text, /first image.*first frame.*second image.*last frame/);
+
+  const edit = plugin.buildSubmitRequest(driver({
+    task: "edit", video: "data:video/mp4;base64,dmlkZW8=", duration: 3,
+  }));
+  assert.deepEqual(edit.body.response_format, [{ type: "video" }]);
+  assert.equal(edit.body.generation_config.video_config.task, "edit");
+
+  const extend = driver({
+    task: "extend", video: "data:video/mp4;base64," + mp4(3),
+    duration: 6, input_duration: 3,
+  });
+  const extension = plugin.buildSubmitRequest(extend);
+  assert.deepEqual(extension.body.response_format, [{ type: "video" }]);
+  assert.equal(extension.body.generation_config.video_config.task, "extend");
+  assert.deepEqual(plugin.extractUsage(extend), { seconds: 6, resolution: "720p" });
+  assert.throws(() => decode({
+    task: "extend", video: "data:video/mp4;base64," + mp4(3), duration: 3, input_duration: 3,
+  }), /大于输入/);
+});
+
+test("extension settles full output movie duration, not added seconds, tokens, or client hints", () => {
+  for (const version of [0, 1]) {
+    const ctx = driver({ task: "extend", video: "data:video/mp4;base64," + mp4(3), duration: 6 });
+    const submitted = plugin.parseSubmitResponse(ctx, { body: { id: "v1_fixture", status: "in_progress" } });
+    assert.equal(submitted.state.input_seconds, 3);
+    const query = { taskId: "v1_fixture", action: "extend", state: submitted.state };
+    const data = completed({ type: "video", mime_type: "video/mp4", data: mp4(9, "360p", version) });
+    data.duration = 999; data.usage = { total_output_tokens: 17376 };
+    const parsed = plugin.parseTaskResult(query, data);
+    assert.equal(parsed.status, "SUCCESS");
+    assert.equal(parsed.state.output_seconds, 9);
+    assert.deepEqual(plugin.extractUsageOnComplete(query, parsed, data), { seconds: 9, resolution: "360p" });
+    const immediate = plugin.parseSubmitResponse(ctx, { body: data });
+    assert.equal(immediate.immediate.status, "SUCCESS");
+    assert.deepEqual(plugin.extractUsageOnComplete({ action: "extend", state: immediate.state },
+      immediate.immediate, immediate.taskData), { seconds: 9, resolution: "360p" });
+  }
+  const base = { task: "extend", video: "data:video/mp4;base64," + mp4(3) };
+  assert.equal(plugin.extractUsage(driver(base)).seconds, 40);
+  assert.throws(() => decode({ ...base, video: "data:video/mp4;base64," + mp4(31) }), /1 到 30/);
+  assert.throws(() => decode({ ...base, metadata: { output_gcs_uri: "gs://fixture-bucket/out/" } }), /内联 MP4/);
+  assert.throws(() => decode({ ...base, size: "1280x720" }), /沿用输入画面/);
+  assert.throws(() => decode({ ...base, resolution: "4k" }), /沿用输入分辨率/);
+  assert.equal(plugin.parseTaskResult({ action: "extend" }, completed()).status, "UNKNOWN");
+  assert.equal(plugin.extractUsageOnComplete({}, {}, { usage: { total_tokens: 99999 } }), null);
+});
+
+test("all documented resolution and orientation sizes agree with wire and frozen usage", () => {
+  for (const [size, resolution, ratio] of [
+    ["640x360", "360p", "16:9"], ["360x640", "360p", "9:16"],
+    ["1920x1080", "1080p", "16:9"], ["1080x1920", "1080p", "9:16"],
+    ["3840x2160", "4k", "16:9"], ["2160x3840", "4k", "9:16"],
+  ]) {
+    const ctx = driver({ size });
+    const format = plugin.buildSubmitRequest(ctx).body.response_format[0];
+    assert.equal(format.resolution, resolution); assert.equal(format.aspect_ratio, ratio);
+    assert.equal(plugin.extractUsage(ctx).resolution, resolution);
+  }
+  for (const value of [
+    { size: "1080x1920", resolution: "720p" },
+    { first_frame: "data:image/png;base64,YQ==", firstFrame: "data:image/png;base64,Yg==" },
+    { last_frame: "data:image/png;base64,YQ==" },
+    { task: "text_to_video", image: "data:image/png;base64,YQ==" },
+    { task: "image_to_video", image: "data:image/png;base64,YQ==", video: "data:video/mp4;base64,dmlkZW8=" },
+    { temperature: true }, { temperature: null }, { temperature: 2.1 }, { top_p: 1.1 },
+    { previous_interaction_id: "one", metadata: { previous_interaction_id: "two" } },
   ]) assert.throws(() => decode(value));
 });
 

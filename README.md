@@ -17,7 +17,7 @@ Minimax-H3 与 XM-Video 的初始独立版本与当时88API镜像和生产自定
 
 ## Vertex Omni：独立隔离测试版
 
-`vertex-omni@1.0.1` 是独立的 Vertex Interactions 视频插件，不覆盖
+`vertex-omni@1.1.0` 是独立的 Vertex Interactions 视频插件，不覆盖
 `vertex-ai`，不声明渠道类型41，不注册Veo、旧Omni或正式1.1模型名，
 也不启用动态模型接管。当前只声明 `vertex-omni-1.1-test`；默认发送精确
 上游ID `gemini-omni-1.1-flash-preview`，也允许测试渠道显式映射到该ID。
@@ -47,6 +47,8 @@ Minimax-H3 与 XM-Video 的初始独立版本与当时88API镜像和生产自定
 - [Google Omni 1.1模型页](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/gemini/omni-1-1-flash)
 - [Google视频生成REST示例](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/video/generate-videos-from-text)
 - [Google视频编辑REST示例](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/video/edit-videos)
+- [Google首尾帧REST示例](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/video/generate-videos-from-first-and-last-frames)
+- [Google延长REST示例](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/video/extend-videos)
 - [Google官方参考实现，固定提交50a918c](https://github.com/GoogleCloudPlatform/genmedia-creative-studio/blob/50a918cfba4dc0384b6be474af9c90b6e4846d47/experiments/mcp-genmedia/mcp-genmedia-go/mcp-common/omni.go)
 
 `1.0.1`修正Google REST的duration单位：旧版发送`"3"`，现改为`"3s"`，
@@ -55,22 +57,40 @@ Minimax-H3 与 XM-Video 的初始独立版本与当时88API镜像和生产自定
 回归服务端显式拒绝无单位duration，避免旧版宽松fixture重复掩盖错误。
 这不代表仅凭文档或模拟结果即可断定真实生成已成功；实例验收另行记录。
 
-### 首版刻意收窄的能力
+### 1.1.0 模式和边界
 
-- 单个输出，720p，1280x720或720x1280，时长整数3–10秒，默认3秒；
+- 单个输出，360p/720p/1080p/4k，两种比例；普通生成时长整数3–10秒，默认3秒；
   冲突的duration/seconds/metadata别名、数量和分辨率覆盖直接拒绝。
-- 最多10张图片和1个参考视频（这是此候选的保守限制，不是宣称1.1只能接收1个视频）。
+- `size` 支持上述四档横屏/竖屏的准确尺寸，并同时约束分辨率和比例。
+- `task` 支持 `text_to_video`、`image_to_video`、`reference_to_video`、`edit`、`extend`。
+  默认无素材为文生、普通参考图/多个视频或混合参考为reference、一段视频为edit。
+  首尾帧字段自动选择image_to_video；最多两图，以顺序而非未文档化role发送，
+  明确首尾帧指令追加到提示词，不能与普通参考图片混用。
+- 普通参考最多10张图片、3段视频；首尾帧最多2图；edit/extend要求单段视频。
+- `temperature`（0–2）和`top_p`/`topP`（0–1）显式转发到generation_config。
+  不支持独立音频输入，不再默默忽略这些已知字段。
 - 输入支持指定MIME的Data URI、multipart文件及`gs://`对象。图片20MiB，
   视频64MiB；multipart还受宿主累计文件大小限制。
   支持PNG/JPEG/WebP/HEIC/HEIF图片和MP4/MOV/WebM视频。
 - **暂不支持HTTP(S)输入URL或无MIME的裸Base64**。宿主当前没有提供此
   插件可直接复用的安全下载/媒体时长预检接口，不能把Google对gs://的
   支持当作任意HTTPS URL可用。assets站链接须先由客户端转为Data URI、
-  文件或GCS对象。参考视频实际时长仍由Google校验，不宣称本地已做时长检测。
-- `metadata.previous_interaction_id`支持继续Interaction；
+  文件或GCS对象。普通参考视频及文件/GCS的实际输入时长由Google校验。
+- 顶层或`metadata.previous_interaction_id`支持继续Interaction，必须是Google ID，
+  不是本站task_id；客户端须保留同账号/项目的上轮上下文。
   可选`metadata.output_gcs_uri`要求服务账号有相应存储权限。
-- 计费用量只返回已校验的请求seconds和720p，不猜输出秒数，不将
-  上游token当作时长。价格由测试实例管理员另配，本仓库不配置生产价格。
+- edit/extend不能指定比例或size，避免Google真实400；edit默认使用最小输出格式，
+  显式resolution按官方编辑示例写入output。普通生成才发送duration/aspect_ratio/resolution。
+- **延长计费为成品完整时长，不是新增时长。** 请求duration是预扣估计，
+  不冒充任意精确最终时长控制；省略时预扣40秒，完成后按MP4电影时间轴mvhd
+  实测总秒数（保留毫秒）结算。3秒原片延长成6秒，按6秒重新计费；
+  成品实际9.024秒则按9.024秒，而不是3秒、请求估计6秒或其中一条短轨道。
+  价格及组倍率仍由宿主执行，本仓库不写售价。
+- 延长仅接受单段输入；内联MP4会校验1–30秒。输出需要内联可测时长的MP4，
+  因此extend不允许output_gcs_uri；不会猜测URI视频时长或把token换算为秒数。
+  不可测量的成品返回UNKNOWN等待核验，不按预估量伪装成功。
+- 普通生成/编辑保持请求秒数计费；延长才覆盖完成usage。旧任务无extend状态，
+  不会因插件升级改变原计费。回调宿主接线问题不在本插件更新中解决。
 
 输入示例：
 

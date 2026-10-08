@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/binary"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -199,4 +200,79 @@ func TestIndependentPluginCatalogueVertexOmniHTTP(t *testing.T) {
 			map[string]any{"model": info.OriginModelName, "requestBody": invalid})
 		require.Error(t, err)
 	}
+}
+
+func TestIndependentPluginCatalogueVertexOmniCapabilitiesAndExtensionUsage(t *testing.T) {
+	source, err := os.ReadFile("../../../../../plugins/vertex-omni/plugin.js")
+	require.NoError(t, err)
+	plugin, err := pluginruntime.NewRegistry().Register(string(source), pluginruntime.Options{})
+	require.NoError(t, err)
+	call := func(hook string, args ...any) any {
+		value, callErr := plugin.Engine.Call(context.Background(), hook, args...)
+		require.NoError(t, callErr, hook)
+		return value
+	}
+	ctx := func(body map[string]any) map[string]any {
+		return map[string]any{"model": "vertex-omni-1.1-test", "requestBody": body,
+			"upstreamModel": "gemini-omni-1.1-flash-preview", "baseUrl": "https://aiplatform.googleapis.com",
+			"authHeader": "Bearer fixture", "auth": map[string]any{"projectId": "fixture-project"}}
+	}
+	for _, resolution := range []string{"360p", "720p", "1080p", "4k"} {
+		c := ctx(map[string]any{"prompt": "Fixture", "duration": 10, "resolution": resolution,
+			"aspect_ratio": "9:16", "temperature": 0, "top_p": 1})
+		wire := call("buildSubmitRequest", c).(map[string]any)["body"].(map[string]any)
+		format := wire["response_format"].([]any)[0].(map[string]any)
+		assert.Equal(t, resolution, format["resolution"])
+		assert.Equal(t, "10s", format["duration"])
+		generation := wire["generation_config"].(map[string]any)
+		assert.EqualValues(t, 0, generation["temperature"])
+		assert.EqualValues(t, 1, generation["top_p"])
+		assert.Equal(t, resolution, call("extractUsage", c).(map[string]any)["resolution"])
+	}
+	atom := func(kind string, body []byte) []byte {
+		header := make([]byte, 8)
+		binary.BigEndian.PutUint32(header, uint32(len(body)+8))
+		copy(header[4:], kind)
+		return append(header, body...)
+	}
+	mp4 := func(seconds uint32) string {
+		mdhd, hdlr, tkhd := make([]byte, 24), make([]byte, 24), make([]byte, 84)
+		binary.BigEndian.PutUint32(mdhd[12:], 1000)
+		binary.BigEndian.PutUint32(mdhd[16:], seconds*1000)
+		copy(hdlr[8:], "vide")
+		binary.BigEndian.PutUint32(tkhd[76:], 1280*65536)
+		binary.BigEndian.PutUint32(tkhd[80:], 720*65536)
+		mdia := atom("mdia", append(atom("mdhd", mdhd), atom("hdlr", hdlr)...))
+		trak := atom("trak", append(atom("tkhd", tkhd), mdia...))
+		data := append(atom("ftyp", []byte("isom0000")), atom("moov", append(atom("mvhd", mdhd), trak...))...)
+		return base64.StdEncoding.EncodeToString(data)
+	}
+	c := ctx(map[string]any{"prompt": "Extend fixture", "task": "extend", "duration": 6,
+		"video": "data:video/mp4;base64," + mp4(3)})
+	wire := call("buildSubmitRequest", c).(map[string]any)["body"].(map[string]any)
+	format := wire["response_format"].([]any)[0].(map[string]any)
+	assert.Equal(t, map[string]any{"type": "video"}, format)
+	assert.EqualValues(t, 6, call("extractUsage", c).(map[string]any)["seconds"])
+	response := map[string]any{"body": map[string]any{"id": "v1_extension", "status": "in_progress"}}
+	submitted := call("parseSubmitResponse", c, response).(map[string]any)
+	query := map[string]any{"taskId": "v1_extension", "action": "extend", "state": submitted["state"]}
+	data := map[string]any{"id": "v1_extension", "status": "completed", "outputs": []any{
+		map[string]any{"type": "video", "mime_type": "video/mp4", "data": mp4(9)},
+	}, "usage": map[string]any{"total_output_tokens": 99999}, "duration": 100}
+	result := call("parseTaskResult", query, data).(map[string]any)
+	assert.Equal(t, "SUCCESS", result["status"])
+	facts := call("extractUsageOnComplete", query, result, data).(map[string]any)
+	assert.EqualValues(t, 9, facts["seconds"], "charge full 9s output, not 6s requested or 6s added")
+	immediate := call("parseSubmitResponse", c, map[string]any{"body": data}).(map[string]any)
+	immediateFacts := call("extractUsageOnComplete", map[string]any{"action": "extend", "state": immediate["state"]},
+		immediate["immediate"], immediate["taskData"]).(map[string]any)
+	assert.EqualValues(t, 9, immediateFacts["seconds"])
+	assert.NotContains(t, string(mustMarshalOmniTest(t, immediate["taskData"])), mp4(9))
+}
+
+func mustMarshalOmniTest(t *testing.T, value any) []byte {
+	t.Helper()
+	data, err := common.Marshal(value)
+	require.NoError(t, err)
+	return data
 }
