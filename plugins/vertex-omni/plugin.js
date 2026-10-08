@@ -13,7 +13,7 @@ export const meta = {
   key: "vertex-omni",
   name: "Vertex Omni",
   icon: "VertexAI.Color",
-  version: "1.1.0",
+  version: "1.1.1",
   author: { name: "88API", url: "https://github.com/blackdm666/88api-task-plugins" },
   description: {
     en: "Isolated Omni 1.1 video adapter with service-account authentication",
@@ -392,7 +392,9 @@ export function buildSubmitRequest(ctx) {
   if (!["edit", "extend"].includes(req.task)) {
     Object.assign(format, { aspect_ratio: req.aspect_ratio, resolution: req.resolution });
   }
-  if (req.task === "edit" && req.explicit_resolution) format.output = req.resolution;
+  // The published edit example uses "output", but the real service rejects it
+  // as an unknown parameter. Use the response_format resolution field.
+  if (req.task === "edit" && req.explicit_resolution) format.resolution = req.resolution;
   if (req.output_gcs_uri) Object.assign(format, { delivery: "uri", gcs_uri: req.output_gcs_uri });
   const body = {
     model: UPSTREAM_MODEL,

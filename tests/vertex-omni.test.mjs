@@ -17,7 +17,7 @@ function driver(value = {}) {
 function completed(part = { type: "video", mime_type: "video/mp4", data: "dmlkZW8=" }) {
   return { id: "v1_fixture", status: "completed", steps: [{ type: "model_output", content: [part] }] };
 }
-function mp4(seconds, resolution = "720p", version = 0) {
+function mp4(seconds, resolution = "720p", version = 0, movieSeconds = seconds) {
   const atom = (type, ...parts) => {
     const body = Buffer.concat(parts), header = Buffer.alloc(8);
     header.writeUInt32BE(body.length + 8); header.write(type, 4);
@@ -29,6 +29,9 @@ function mp4(seconds, resolution = "720p", version = 0) {
   mdhd.writeUInt32BE(1000, time);
   if (version) mdhd.writeBigUInt64BE(BigInt(seconds * 1000), time + 4);
   else mdhd.writeUInt32BE(seconds * 1000, time + 4);
+  const movie = Buffer.from(mdhd);
+  if (version) movie.writeBigUInt64BE(BigInt(Math.round(movieSeconds * 1000)), time + 4);
+  else movie.writeUInt32BE(Math.round(movieSeconds * 1000), time + 4);
   const hdlr = Buffer.alloc(24); hdlr.write("vide", 8);
   const tkhd = Buffer.alloc(84);
   const [width, height] = { "360p": [640, 360], "720p": [1280, 720], "1080p": [1920, 1080], "4k": [3840, 2160] }[resolution];
@@ -37,13 +40,13 @@ function mp4(seconds, resolution = "720p", version = 0) {
     atom("ftyp", Buffer.from("isom0000")),
     // mdat is deliberately not interpreted, even with fake metadata markers.
     atom("mdat", Buffer.from("fake-mvhd-mdhd-never-read")),
-    atom("moov", atom("mvhd", mdhd), atom("trak", atom("tkhd", tkhd), atom("mdia", atom("mdhd", mdhd), atom("hdlr", hdlr)))),
+    atom("moov", atom("mvhd", movie), atom("trak", atom("tkhd", tkhd), atom("mdia", atom("mdhd", mdhd), atom("hdlr", hdlr)))),
   ]).toString("base64");
 }
 
 test("QA manifest does not intercept production Vertex, Veo or Omni models", () => {
   assert.equal(plugin.meta.key, "vertex-omni");
-  assert.equal(plugin.meta.version, "1.1.0");
+  assert.equal(plugin.meta.version, "1.1.1");
   assert.deepEqual(plugin.meta.models, [model]);
   assert.equal(plugin.meta.channelTypes, undefined);
   assert.equal(plugin.meta.dynamicModels, undefined);
@@ -158,6 +161,10 @@ test("official Omni modes, sampling, frame roles, and total-duration extension b
   }));
   assert.deepEqual(edit.body.response_format, [{ type: "video" }]);
   assert.equal(edit.body.generation_config.video_config.task, "edit");
+  const editHD = plugin.buildSubmitRequest(driver({
+    task: "edit", video: "data:video/mp4;base64,dmlkZW8=", resolution: "1080p",
+  }));
+  assert.deepEqual(editHD.body.response_format, [{ type: "video", resolution: "1080p" }]);
 
   const extend = driver({
     task: "extend", video: "data:video/mp4;base64," + mp4(3),
@@ -197,6 +204,17 @@ test("extension settles full output movie duration, not added seconds, tokens, o
   assert.throws(() => decode({ ...base, resolution: "4k" }), /沿用输入分辨率/);
   assert.equal(plugin.parseTaskResult({ action: "extend" }, completed()).status, "UNKNOWN");
   assert.equal(plugin.extractUsageOnComplete({}, {}, { usage: { total_tokens: 99999 } }), null);
+});
+
+test("extension bills the full playable movie when video and audio timelines differ", () => {
+  for (const version of [0, 1]) {
+    const query = { action: "extend", state: { task: "extend", seconds: 40 } };
+    const data = completed({ type: "video", mime_type: "video/mp4", data: mp4(6, "360p", version, 9.024) });
+    const result = plugin.parseTaskResult(query, data);
+    assert.equal(result.status, "SUCCESS");
+    assert.deepEqual(plugin.extractUsageOnComplete(query, result, data), { seconds: 9.024, resolution: "360p" });
+    assert.equal(result.state.output_seconds, 9.024);
+  }
 });
 
 test("all documented resolution and orientation sizes agree with wire and frozen usage", () => {

@@ -12,12 +12,31 @@
 | SD-Video | `sdgo-video` | `1.0.3` |
 | XM-Video | `xm-video` | `3.0.0` |
 | Vertex Omni (isolated QA) | `vertex-omni` | `1.0.0` |
+| Alibaba Bailian (factory-compatible override) | `alibaba` | `1.4.2` |
 
 Minimax-H3 与 XM-Video 的初始独立版本与当时88API镜像和生产自定义插件源码一致，仅迁移维护及发布位置；Minimax-H3 Async 是另行新增的插件。
 
+## Alibaba Bailian：Wan3 超宽画幅修正
+
+`alibaba@1.4.2` 保留 QuantumNous 出厂插件 `1.4.1` 的 key、名称、
+渠道类型17、模型清单、所有图像/视频协议和用量计费接口。
+唯一功能变化是为 `wan3.0-video` 和 `wan3.0-video-prime` 放行官方
+`21:9`；其他 Wan2.x 模型的比例白名单不扩大。已有任务读取兼容。
+
+来源：QuantumNous/NewAPI 的 `plugins/tasks/alibaba/plugin.js`，
+1.4.1 原始 SHA-256
+`c8f217afe6fe79bb0db3e723730a86399cee74e8087f474859e39e52a6acb55d`。
+保留原作者与AGPL许可证，不把此修正伪装为官方发布版本。
+官方依据为阿里云《万相3.0-视频生成API参考》中的 ratio 枚举。
+
+通过标准任务插件上传接口以同 key 覆盖出厂版，不修改NewAPI镜像。
+同 key 覆盖适用于该插件现有全部绑定，不能描述为仅渠道183的私有副本；
+发布测试必须证明非Wan3模型的行为保持。需要回退时，在官方版本
+历史中切回原出厂 `1.4.1`，不通过停用整个 Alibaba 插件实现回滚。
+
 ## Vertex Omni：独立隔离测试版
 
-`vertex-omni@1.1.0` 是独立的 Vertex Interactions 视频插件，不覆盖
+`vertex-omni@1.1.1` 是独立的 Vertex Interactions 视频插件，不覆盖
 `vertex-ai`，不声明渠道类型41，不注册Veo、旧Omni或正式1.1模型名，
 也不启用动态模型接管。当前只声明 `vertex-omni-1.1-test`；默认发送精确
 上游ID `gemini-omni-1.1-flash-preview`，也允许测试渠道显式映射到该ID。
@@ -57,7 +76,7 @@ Minimax-H3 与 XM-Video 的初始独立版本与当时88API镜像和生产自定
 回归服务端显式拒绝无单位duration，避免旧版宽松fixture重复掩盖错误。
 这不代表仅凭文档或模拟结果即可断定真实生成已成功；实例验收另行记录。
 
-### 1.1.0 模式和边界
+### 1.1.x 模式和边界
 
 - 单个输出，360p/720p/1080p/4k，两种比例；普通生成时长整数3–10秒，默认3秒；
   冲突的duration/seconds/metadata别名、数量和分辨率覆盖直接拒绝。
@@ -80,7 +99,9 @@ Minimax-H3 与 XM-Video 的初始独立版本与当时88API镜像和生产自定
   不是本站task_id；客户端须保留同账号/项目的上轮上下文。
   可选`metadata.output_gcs_uri`要求服务账号有相应存储权限。
 - edit/extend不能指定比例或size，避免Google真实400；edit默认使用最小输出格式，
-  显式resolution按官方编辑示例写入output。普通生成才发送duration/aspect_ratio/resolution。
+  显式分辨率写入resolution。官方编辑示例写成output，但真实接口明确拒绝
+  `Unknown parameter 'output' at 'response_format[0]'`；1.1.1据实修正，
+  不照抄文档错误，也不在已受理生成后自动重试。普通生成才发送duration/aspect_ratio。
 - **延长计费为成品完整时长，不是新增时长。** 请求duration是预扣估计，
   不冒充任意精确最终时长控制；省略时预扣40秒，完成后按MP4电影时间轴mvhd
   实测总秒数（保留毫秒）结算。3秒原片延长成6秒，按6秒重新计费；
