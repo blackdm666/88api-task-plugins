@@ -297,6 +297,30 @@
       ]
     },
     {
+      "key": "vertex-omni",
+      "name": "Vertex Omni",
+      "description": {
+        "en": "Isolated Omni 1.1 video adapter with service-account authentication",
+        "zh": "使用服务账号鉴权的隔离 Omni 1.1 视频适配器"
+      },
+      "models": [
+        "vertex-omni-1.1-test"
+      ],
+      "protocols": [
+        "openai_video"
+      ],
+      "latest": "1.0.0",
+      "versions": [
+        {
+          "version": "1.0.0",
+          "path": "plugins/vertex-omni/1.0.0/plugin.js",
+          "sha256": "02c20fe4ab7a200dc099f2a6b3f46fb16f471bcf97308baf37151781c02f06a7",
+          "minApiVersion": 1,
+          "kind": "task"
+        }
+      ]
+    },
+    {
       "key": "xm-video",
       "name": "XM-Video",
       "description": {
