@@ -268,6 +268,25 @@ func TestIndependentPluginCatalogueVertexOmniCapabilitiesAndExtensionUsage(t *te
 		immediate["immediate"], immediate["taskData"]).(map[string]any)
 	assert.EqualValues(t, 9, immediateFacts["seconds"])
 	assert.NotContains(t, string(mustMarshalOmniTest(t, immediate["taskData"])), mp4(9))
+
+	// New continuations use output facts, while pre-upgrade snapshots retain
+	// their old contract. Nothing rewrites already billed production tasks.
+	multi := ctx(map[string]any{"prompt": "Continue fixture", "duration": 3,
+		"previous_interaction_id": "v1_previous"})
+	multiWire := call("buildSubmitRequest", multi).(map[string]any)["body"].(map[string]any)
+	assert.NotContains(t, multiWire, "generation_config")
+	assert.Equal(t, "3s", multiWire["response_format"].([]any)[0].(map[string]any)["duration"])
+	assert.EqualValues(t, 40, call("extractUsage", multi).(map[string]any)["seconds"])
+	multiSubmitted := call("parseSubmitResponse", multi, response).(map[string]any)
+	multiState := multiSubmitted["state"].(map[string]any)
+	assert.Equal(t, true, multiState["bill_output_duration"])
+	assert.EqualValues(t, 3, multiState["requested_seconds"])
+	multiQuery := map[string]any{"taskId": "v1_extension", "action": "text_to_video", "state": multiState}
+	multiResult := call("parseTaskResult", multiQuery, data).(map[string]any)
+	assert.Equal(t, "SUCCESS", multiResult["status"])
+	assert.EqualValues(t, 9, call("extractUsageOnComplete", multiQuery, multiResult, data).(map[string]any)["seconds"])
+	assert.Nil(t, call("extractUsageOnComplete", map[string]any{"action": "text_to_video",
+		"state": map[string]any{"seconds": 3}}, multiResult, data))
 }
 
 func mustMarshalOmniTest(t *testing.T, value any) []byte {

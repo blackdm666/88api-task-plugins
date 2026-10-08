@@ -13,7 +13,7 @@ export const meta = {
   key: "vertex-omni",
   name: "Vertex Omni",
   icon: "VertexAI.Color",
-  version: "1.1.3",
+  version: "1.1.4",
   author: { name: "88API", url: "https://github.com/blackdm666/88api-task-plugins" },
   description: {
     en: "Isolated Omni 1.1 video adapter with service-account authentication",
@@ -357,8 +357,8 @@ function normalize(req, model) {
     throw new Error("多轮请求不能同时指定 task 或首尾帧模式，请沿用上一轮上下文。");
   }
   if (output !== undefined) gcs(output);
-  if (inferredTask === "extend" && output !== undefined) {
-    throw new Error("延长任务需返回内联 MP4 用于完整时长结算，请移除 output_gcs_uri。");
+  if ((inferredTask === "extend" || previous !== undefined) && output !== undefined) {
+    throw new Error("延长或多轮任务需返回内联 MP4 用于完整时长结算，请移除 output_gcs_uri。");
   }
   return { model, prompt, duration: seconds, input_duration: measuredInput ? measuredInput.seconds : inputSeconds, task: inferredTask,
     aspect_ratio: ratio, resolution, explicit_resolution: explicitResolution, temperature, top_p: topP, content,
@@ -455,6 +455,12 @@ function video(body) {
   }
   return null;
 }
+function billsOutputDuration(ctx) {
+  // New continuations persist an explicit flag. Old tasks with no flag retain
+  // their original request-duration contract; do not retroactively recharge.
+  return ctx.action === "extend" || (ctx.state || {}).task === "extend" ||
+    (ctx.state || {}).bill_output_duration === true;
+}
 export function parseTaskResult(ctx, body) {
   if (!object(body)) return { status: "UNKNOWN", reason: "无法识别 Interaction 响应。" };
   if (body.id !== undefined && ctx.taskId && body.id !== ctx.taskId) {
@@ -471,11 +477,11 @@ export function parseTaskResult(ctx, body) {
   if (status !== "completed") return { status: "UNKNOWN", reason: "无法识别 Interaction 状态：" + status };
   const result = video(body);
   if (!result) return { status: "FAILURE", progress: "100%", reason: "Interaction 已完成但未返回可读取的视频。" };
-  if (ctx.action === "extend" || (ctx.state || {}).task === "extend") {
+  if (billsOutputDuration(ctx)) {
     const facts = result.data && mp4Facts(result.data);
-    if (!facts) return { status: "UNKNOWN", reason: "延长成品的完整 MP4 时长无法核验，不能按预估时长完成结算。" };
+    if (!facts) return { status: "UNKNOWN", reason: "成品的完整 MP4 时长无法核验，不能按预估时长完成结算。" };
     return { status: "SUCCESS", progress: "100%", url: result.url, remoteUrl: result.url,
-      state: Object.assign({}, ctx.state || {}, { task: "extend", output_seconds: facts.seconds, output_resolution: facts.resolution }) };
+      state: Object.assign({}, ctx.state || {}, { output_seconds: facts.seconds, output_resolution: facts.resolution }) };
   }
   return { status: "SUCCESS", progress: "100%", url: result.url, remoteUrl: result.url };
 }
@@ -487,7 +493,8 @@ export function parseSubmitResponse(ctx, response) {
   if (response.statusCode >= 400) throw new Error("视频服务返回 HTTP " + response.statusCode + "，请核查是否已受理，勿重复提交。");
   const taskId = id(body.id);
   const req = normalize(ctx.requestBody, ctx.model);
-  const parsed = parseTaskResult({ taskId, action: req.task }, body);
+  const outputBillingState = req.previous_interaction_id ? { bill_output_duration: true } : {};
+  const parsed = parseTaskResult({ taskId, action: req.task, state: outputBillingState }, body);
   if (parsed.status === "UNKNOWN") throw new Error(parsed.reason + " 请核查已受理任务，勿重复提交。");
   // Persist a compact projection only, never echoed inputs, thoughts or bytes.
   const taskData = { id: taskId, status: body.status };
@@ -495,7 +502,11 @@ export function parseSubmitResponse(ctx, response) {
   if (parsed.status === "SUCCESS" && result && result.uri) taskData.outputs = [
     { type: "video", mime_type: result.mime, uri: result.uri },
   ];
-  const state = { seconds: req.duration, resolution: req.resolution, aspect_ratio: req.aspect_ratio };
+  const state = { seconds: req.previous_interaction_id ? 40 : req.duration,
+    resolution: req.resolution, aspect_ratio: req.aspect_ratio };
+  if (req.previous_interaction_id) Object.assign(state, {
+    bill_output_duration: true, requested_seconds: req.duration,
+  });
   if (req.input_duration !== undefined) state.input_seconds = req.input_duration;
   if (req.task !== "text_to_video") state.task = req.task;
   if (parsed.state) Object.assign(state, parsed.state);
@@ -509,10 +520,13 @@ export function buildQueryRequest(ctx) {
 }
 export function extractUsage(ctx) {
   const req = normalize(ctx.requestBody, ctx.model);
-  return { seconds: req.duration, resolution: req.resolution };
+  // A continuation can return a concatenated video longer than the requested
+  // new segment. Reserve the existing bounded estimate, then settle the full
+  // returned MP4, without changing the requested duration sent to Google.
+  return { seconds: req.previous_interaction_id ? 40 : req.duration, resolution: req.resolution };
 }
 export function extractUsageOnComplete(ctx, result, data) {
-  if (ctx.action !== "extend" && (ctx.state || {}).task !== "extend") return null;
+  if (!billsOutputDuration(ctx)) return null;
   if (result.status !== "SUCCESS") return null;
   const output = object(data) ? video(data) : null;
   const facts = output && output.data ? mp4Facts(output.data) : null;
@@ -525,7 +539,7 @@ export function extractUsageOnComplete(ctx, result, data) {
       RESOLUTIONS.includes(state.output_resolution)) {
     return { seconds: state.output_seconds, resolution: state.output_resolution };
   }
-  throw new Error("延长成品完整时长尚未核验。");
+  throw new Error("成品完整时长尚未核验。");
 }
 export function listArtifacts(ctx) {
   const result = object(ctx.data) ? video(ctx.data) : null;

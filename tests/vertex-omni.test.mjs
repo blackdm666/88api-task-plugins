@@ -46,7 +46,7 @@ function mp4(seconds, resolution = "720p", version = 0, movieSeconds = seconds) 
 
 test("QA manifest does not intercept production Vertex, Veo or Omni models", () => {
   assert.equal(plugin.meta.key, "vertex-omni");
-  assert.equal(plugin.meta.version, "1.1.3");
+  assert.equal(plugin.meta.version, "1.1.4");
   assert.deepEqual(plugin.meta.models, [model]);
   assert.equal(plugin.meta.channelTypes, undefined);
   assert.equal(plugin.meta.dynamicModels, undefined);
@@ -109,15 +109,18 @@ test("image/video references use documented typed parts without silently downloa
   const request = plugin.buildSubmitRequest(driver({
     video: "data:video/mp4;base64,dmlkZW8=",
     images: ["data:image/png;base64,aW1hZ2U=", "gs://fixture-bucket/image.webp"],
-    metadata: { previous_interaction_id: "v1_previous", output_gcs_uri: "gs://fixture-bucket/out/" },
+    metadata: { previous_interaction_id: "v1_previous" },
   }));
   assert.equal(request.action, "reference_to_video");
   assert.deepEqual(request.body.input[0].content.map(part => part.type), ["video", "image", "image", "text"]);
   assert.equal(request.body.input[0].content[0].data, "dmlkZW8=");
   assert.equal(request.body.input[0].content[2].uri, "gs://fixture-bucket/image.webp");
   assert.equal(request.body.previous_interaction_id, "v1_previous");
-  assert.equal(request.body.response_format[0].delivery, "uri");
+  assert.equal(request.body.response_format[0].delivery, undefined);
   assert.equal(request.body.generation_config, undefined, "continuation inherits its mode");
+  assert.equal(plugin.buildSubmitRequest(driver({
+    metadata: { output_gcs_uri: "gs://fixture-bucket/out/" },
+  })).body.response_format[0].delivery, "uri");
   for (const value of [
     { images: "not-array" }, { videos: Array(4).fill("gs://fixture-bucket/a.mp4") },
     { images: Array(11).fill("gs://fixture-bucket/a.png") },
@@ -234,6 +237,39 @@ test("multi-turn inherits the previous video mode and never sends a conflicting 
   assert.deepEqual(request.body.generation_config, { temperature: 0, top_p: 1 });
   assert.equal(plugin.buildSubmitRequest(driver({ previous_interaction_id: "v1_previous" })).body.generation_config, undefined);
   assert.throws(() => decode({ previous_interaction_id: "v1_previous", task: "text_to_video" }), /不能同时指定/);
+});
+
+test("new multi-turn reserves safely and bills the complete new MP4, not request or added seconds", () => {
+  const ctx = driver({ previous_interaction_id: "v1_previous", duration: 3, resolution: "1080p" });
+  assert.deepEqual(plugin.extractUsage(ctx), { seconds: 40, resolution: "1080p" });
+  assert.equal(plugin.buildSubmitRequest(ctx).body.response_format[0].duration, "3s");
+  const submitted = plugin.parseSubmitResponse(ctx, { body: { id: "v1_fixture", status: "in_progress" } });
+  assert.equal(submitted.state.bill_output_duration, true);
+  assert.equal(submitted.state.seconds, 40);
+  assert.equal(submitted.state.requested_seconds, 3);
+  const query = { taskId: "v1_fixture", action: "text_to_video", state: submitted.state };
+  const data = completed({ type: "video", mime_type: "video/mp4", data: mp4(6, "1080p", 0, 6.037) });
+  const result = plugin.parseTaskResult(query, data);
+  assert.equal(result.status, "SUCCESS");
+  assert.equal(result.state.task, undefined, "continuation must not be reclassified as extend");
+  assert.equal(result.state.bill_output_duration, true);
+  assert.deepEqual(plugin.extractUsageOnComplete(query, result, data), { seconds: 6.037, resolution: "1080p" });
+  const immediate = plugin.parseSubmitResponse(ctx, { body: data });
+  assert.deepEqual(plugin.extractUsageOnComplete({ state: immediate.state }, immediate.immediate, immediate.taskData),
+    { seconds: 6.037, resolution: "1080p" });
+});
+
+test("legacy continuation snapshots retain request billing while new unmeasurable results fail closed", () => {
+  const oldQuery = { action: "text_to_video", state: { seconds: 3, resolution: "1080p" } };
+  const data = completed({ type: "video", mime_type: "video/mp4", data: mp4(6, "1080p", 0, 6.037) });
+  assert.equal(plugin.parseTaskResult(oldQuery, data).status, "SUCCESS");
+  assert.equal(plugin.extractUsageOnComplete(oldQuery, { status: "SUCCESS" }, data), null);
+  const query = { state: { bill_output_duration: true, seconds: 40 } };
+  const unmeasurable = completed({ type: "video", mime_type: "video/mp4", uri: "gs://fixture-bucket/out.mp4" });
+  assert.equal(plugin.parseTaskResult(query, unmeasurable).status, "UNKNOWN");
+  assert.throws(() => plugin.extractUsageOnComplete(query, { status: "SUCCESS" }, unmeasurable), /完整时长/);
+  assert.throws(() => decode({ previous_interaction_id: "v1_previous",
+    metadata: { output_gcs_uri: "gs://fixture-bucket/out/" } }), /内联 MP4/);
 });
 
 test("all documented resolution and orientation sizes agree with wire and frozen usage", () => {
