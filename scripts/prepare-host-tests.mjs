@@ -35,6 +35,8 @@ await copyFile(path.join(root, 'tests', 'host', 'gx_video_contract_test.go'),
   path.join(host, 'pkg', 'jsplugin', 'independent_gx_video_contract_test.go'))
 await copyFile(path.join(root, 'tests', 'host', 'sdgo_video_contract_test.go'),
   path.join(host, 'pkg', 'jsplugin', 'independent_sdgo_video_contract_test.go'))
+await copyFile(path.join(root, 'tests', 'host', 'alibaba_wan3_contract_test.go'),
+  path.join(host, 'pkg', 'jsplugin', 'independent_alibaba_wan3_contract_test.go'))
 await copyFile(path.join(root, 'tests', 'host', 'seedream_pro_contract_test.go'),
   path.join(host, 'pkg', 'jsplugin', 'independent_seedream_pro_contract_test.go'))
 await copyFile(path.join(root, 'tests', 'host', 'grok_video_artifact_test.go'),
