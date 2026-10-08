@@ -39,6 +39,8 @@ await copyFile(path.join(root, 'tests', 'host', 'seedream_pro_contract_test.go')
   path.join(host, 'pkg', 'jsplugin', 'independent_seedream_pro_contract_test.go'))
 await copyFile(path.join(root, 'tests', 'host', 'grok_video_artifact_test.go'),
   path.join(host, 'controller', 'independent_grok_video_artifact_test.go'))
+await copyFile(path.join(root, 'tests', 'host', 'vertex_omni_contract_test.go'),
+  path.join(host, 'relay', 'channel', 'task', 'jsplugin', 'independent_vertex_omni_contract_test.go'))
 // The pinned host's historical XinMeng test asserted an internal English
 // error string. The plugin now exposes Chinese guidance to canvas users, so
 // align that sandbox-only assertion with the intentional public message.

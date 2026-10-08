@@ -52,7 +52,7 @@ jobs:
         working-directory: .host
         env:
           GOWORK: 'off'
-        run: go test ./plugins ./pkg/jsplugin ./relay/channel/task/jsplugin ./controller -run 'IndependentPluginCatalogue|BuiltIn|XinMeng|TestDynamicPluginHTTPRetryAndBilling' -count=1 -timeout 10m
+        run: go test ./plugins ./pkg/jsplugin ./relay/channel/task/jsplugin ./controller -run 'IndependentPluginCatalogue|BuiltIn|XinMeng|TestDynamicPluginHTTPRetryAndBilling|OAuth2JWT' -count=1 -timeout 10m
 
   publish:
     needs: validate
