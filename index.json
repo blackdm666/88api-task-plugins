@@ -309,8 +309,15 @@
       "protocols": [
         "openai_video"
       ],
-      "latest": "1.1.0",
+      "latest": "1.1.1",
       "versions": [
+        {
+          "version": "1.1.1",
+          "path": "plugins/vertex-omni/1.1.1/plugin.js",
+          "sha256": "468a89d24fa2ad4e8fcca730d980f0566c72d23ca8d82eb506ac1f27c0b7228e",
+          "minApiVersion": 1,
+          "kind": "task"
+        },
         {
           "version": "1.1.0",
           "path": "plugins/vertex-omni/1.1.0/plugin.js",
