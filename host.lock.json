@@ -1,9 +1,9 @@
 {
   "repository": "blackdm666/new-api",
-  "commit": "5c04ea0d2ae92b6e0f0454719fbd5f37c4453f49",
-  "testedVersion": "v1.0.0-rc.39-88api.1",
-  "minimum88ApiVersion": "v1.0.0-rc.39-88api.1",
+  "commit": "1debc5f3a28eed1e7833aa79455ec0e746d022c1",
+  "testedVersion": "v1.0.0-rc.39-88api.2",
+  "minimum88ApiVersion": "v1.0.0-rc.39-88api.2",
   "apiVersion": 1,
-  "requiredFeatures": ["dynamicModels", "openai_video"],
+  "requiredFeatures": ["dynamicModels", "openai_video", "query-sse-delta@1"],
   "plugins": ["grok-video", "gx-video", "minimax-h3", "minimax-h3-async", "sdgo-video", "xm-video", "seedream-pro", "vertex-omni", "alibaba"]
 }

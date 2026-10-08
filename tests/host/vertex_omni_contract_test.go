@@ -1,14 +1,17 @@
 package jsplugin
 
 import (
+	"bufio"
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -294,4 +297,91 @@ func mustMarshalOmniTest(t *testing.T, value any) []byte {
 	data, err := common.Marshal(value)
 	require.NoError(t, err)
 	return data
+}
+
+// Optional local acceptance uses the exact private captures recovered from
+// Google. CI runs the compact protocol tests; it must not upload user media.
+func TestIndependentPluginCatalogueVertexOmniCapturedSSE(t *testing.T) {
+	directory := os.Getenv("VERTEX_SSE_CAPTURE_DIR")
+	if directory == "" {
+		t.Skip("private captured SSE files are supplied only for local acceptance")
+	}
+	sourcePath := os.Getenv("VERTEX_PLUGIN_SOURCE")
+	if sourcePath == "" {
+		sourcePath = "../../../../../plugins/vertex-omni/plugin.js"
+	}
+	source, err := os.ReadFile(sourcePath)
+	require.NoError(t, err)
+	plugin, err := pluginruntime.NewRegistry().Register(string(source), pluginruntime.Options{})
+	require.NoError(t, err)
+	originalAuth := acquireAccessToken
+	acquireAccessToken = func(vertexcore.Credentials, string) (string, error) { return "fixture-oauth", nil }
+	t.Cleanup(func() { acquireAccessToken = originalAuth; pluginAuthCache = sync.Map{} })
+	key, err := common.Marshal(vertexcore.Credentials{ProjectID: "fixture-project", PrivateKey: "fixture-not-a-key"})
+	require.NoError(t, err)
+	entries, err := filepath.Glob(filepath.Join(directory, "*.sse.raw.txt"))
+	require.NoError(t, err)
+	require.Len(t, entries, 2)
+	for _, path := range entries {
+		t.Run(filepath.Base(path), func(t *testing.T) {
+			first, err := os.Open(path)
+			require.NoError(t, err)
+			scanner := bufio.NewScanner(first)
+			var interaction struct {
+				Interaction struct {
+					ID string `json:"id"`
+				} `json:"interaction"`
+			}
+			for scanner.Scan() {
+				if text, ok := strings.CutPrefix(scanner.Text(), "data:"); ok {
+					require.NoError(t, common.Unmarshal([]byte(strings.TrimSpace(text)), &interaction))
+					break
+				}
+			}
+			require.NoError(t, first.Close())
+			require.NotEmpty(t, interaction.Interaction.ID)
+			requests := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests++
+				assert.Equal(t, http.MethodGet, r.Method)
+				assert.Equal(t, "true", r.URL.Query().Get("stream"))
+				assert.Equal(t, "text/event-stream", r.Header.Get("Accept"))
+				w.Header().Set("Content-Type", "text/event-stream")
+				file, err := os.Open(path)
+				require.NoError(t, err)
+				defer file.Close()
+				_, err = io.Copy(w, file)
+				require.NoError(t, err)
+			}))
+			defer server.Close()
+			info := &relaycommon.RelayInfo{OriginModelName: "vertex-omni-1.1-test",
+				ChannelMeta: &relaycommon.ChannelMeta{ChannelType: constant.ChannelTypeTaskPlugin,
+					ChannelBaseUrl: server.URL, ApiKey: string(key)}}
+			adaptor := New(plugin)
+			adaptor.Init(info)
+			task := &model.Task{TaskID: "task_local_capture", Action: "text_to_video",
+				Properties: model.Properties{OriginModelName: "vertex-omni-1.1-test"},
+				PrivateData: model.TaskPrivateData{UpstreamTaskID: interaction.Interaction.ID,
+					PluginState: []byte(`{"query_sse":true,"seconds":10,"resolution":"4k"}`)}}
+			resp, err := adaptor.FetchTask(server.URL, string(key), task, "")
+			require.NoError(t, err)
+			body, err := io.ReadAll(resp.Body)
+			require.NoError(t, err)
+			require.NoError(t, resp.Body.Close())
+			require.Equal(t, "application/json", resp.Header.Get("Content-Type"))
+			result, err := adaptor.ParseTaskResult(task, resp, body)
+			require.NoError(t, err)
+			require.Equal(t, "SUCCESS", result.Status)
+			data, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(result.Url, "data:video/mp4;base64,"))
+			require.NoError(t, err)
+			expected, err := os.ReadFile(strings.TrimSuffix(path, ".sse.raw.txt") + ".mp4")
+			require.NoError(t, err)
+			assert.Equal(t, sha256.Sum256(expected), sha256.Sum256(data))
+			assert.Empty(t, result.UsageFacts, "ordinary generation retains the original 10s contract")
+			var normalized map[string]any
+			require.NoError(t, common.Unmarshal(body, &normalized))
+			assert.NotContains(t, normalized, "steps", "private thought/input steps are not persisted")
+			assert.Equal(t, 1, requests, "replay never resubmits a generation")
+		})
+	}
 }

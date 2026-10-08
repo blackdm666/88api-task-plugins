@@ -38,11 +38,28 @@ Minimax-H3 与 XM-Video 的初始独立版本与当时88API镜像和生产自定
 
 ## Vertex Omni：独立隔离测试版
 
-`vertex-omni@1.1.4` 是独立的 Vertex Interactions 视频插件，不覆盖
+`vertex-omni@1.2.0` 是独立的 Vertex Interactions 视频插件，不覆盖
 `vertex-ai`，不声明渠道类型41，不注册Veo、旧Omni或正式1.1模型名，
 也不启用动态模型接管。当前只声明 `vertex-omni-1.1-test`；默认发送精确
 上游ID `gemini-omni-1.1-flash-preview`，也允许测试渠道显式映射到该ID。
 它只适用于单独绑定此插件的 Task Plugin 渠道，不支持 New API 中继渠道。
+1.2.0要求宿主提供`query-sse-delta@1`，必须先升级兼容宿主再上传/激活；
+旧宿主会拒绝该能力声明，不能把API v1相同当作支持SSE查询。
+
+### 大视频取回
+
+普通JSON查询仍用于排队/进行中状态。若Google返回completed但JSON视图
+没有视频，插件保存`query_sse=true`并返回非终态90%，不立即判失败退款。
+下一轮只读GET启用`stream=true`；不会重新POST生成任务。
+
+宿主以原生JSON解码SSE事件，插件返回小控制状态及增量操作，
+宿主归一化为标准JSON后再解析终态、提取用量、清除媒体字节并私有缓存。
+输入/思考/签名不进入规范化成品；完整终态前的截断流不能伪装成功。
+查询响应/事件/规范结果最多128MiB，控制状态最多64KiB；
+已有提交和持久化状态的1MiB限制不变。某些更低的运营扫描器配置可能
+额外收紧事件长度；不能用无限制缓冲绕过资源约束。
+
+已经失败且退款的历史任务不会因升级自动重启、改状态或补扣。
 
 ### 协议与验证边界
 
@@ -299,9 +316,10 @@ GitHub发布成功不等于目标实例已安装、启用或完成业务验收�
 ## 兼容性与校验
 
 `host.lock.json`固定已测试的NewAPI源提交。当前锁定
-`5c04ea0d2ae92b6e0f0454719fbd5f37c4453f49` /
-`v1.0.0-rc.39-88api.1`；各插件按实际声明使用API v1、`dynamicModels`
-及`openai_video`等能力。仅看到API v1不代表所有早期版本都支持这些扩展。
+`1debc5f3a28eed1e7833aa79455ec0e746d022c1` /
+`v1.0.0-rc.39-88api.2`；各插件按实际声明使用API v1、`dynamicModels`、
+`openai_video`及可选`query-sse-delta@1`等能力。
+仅看到API v1不代表所有早期版本都支持这些扩展。
 
 工作流只验证插件，不构建或发布NewAPI镜像。测试宿主位于隔离的`.host/`目录，镜像源码仓库不会被修改。升级测试宿主时应显式更新host.lock.json并通过相同回归。
 

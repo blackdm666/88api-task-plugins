@@ -13,7 +13,8 @@ export const meta = {
   key: "vertex-omni",
   name: "Vertex Omni",
   icon: "VertexAI.Color",
-  version: "1.1.4",
+  version: "1.2.0",
+  requiredCapabilities: ["query-sse-delta@1"],
   author: { name: "88API", url: "https://github.com/blackdm666/88api-task-plugins" },
   description: {
     en: "Isolated Omni 1.1 video adapter with service-account authentication",
@@ -450,6 +451,7 @@ function video(body) {
         }
         // External signed URLs are always fetched without Google credentials.
         if (/^https:\/\/[^/@\s\\?#]+(?:\/[^\s\\]*)?$/.test(uri)) return { url: uri, uri, mime };
+        if (uri) return { invalid: true };
       }
     }
   }
@@ -476,7 +478,18 @@ export function parseTaskResult(ctx, body) {
   }
   if (status !== "completed") return { status: "UNKNOWN", reason: "无法识别 Interaction 状态：" + status };
   const result = video(body);
-  if (!result) return { status: "FAILURE", progress: "100%", reason: "Interaction 已完成但未返回可读取的视频。" };
+  if (result && result.invalid) {
+    return { status: "FAILURE", progress: "100%", reason: "Interaction 视频地址格式不安全或不受支持。" };
+  }
+  if (!result) {
+    if (!(ctx.state || {}).query_sse) {
+      // Google can omit large videos from the JSON retrieval view while SSE
+      // retains them. Request a readonly replay, never another generation.
+      return { status: "IN_PROGRESS", progress: "90%",
+        state: Object.assign({}, ctx.state || {}, { query_sse: true }) };
+    }
+    return { status: "UNKNOWN", reason: "Interaction 已完成但SSE尚未返回可读取的视频。" };
+  }
   if (billsOutputDuration(ctx)) {
     const facts = result.data && mp4Facts(result.data);
     if (!facts) return { status: "UNKNOWN", reason: "成品的完整 MP4 时长无法核验，不能按预估时长完成结算。" };
@@ -516,7 +529,100 @@ export function parseSubmitResponse(ctx, response) {
 }
 export function buildQueryRequest(ctx) {
   const conn = connection(ctx);
+  if ((ctx.state || {}).query_sse) {
+    return { url: conn.url + "/" + id(ctx.taskId) + "?stream=true&include_input=false",
+      method: "GET", headers: Object.assign({}, conn.headers, { Accept: "text/event-stream" }),
+      responseType: "sse" };
+  }
   return { url: conn.url + "/" + id(ctx.taskId), method: "GET", headers: conn.headers };
+}
+// Host-decoded events and host-owned JSON deltas keep huge accumulated media
+// out of the small control state returned to the JS sandbox on each event.
+export function parseQueryEventDelta(ctx, event, previousState) {
+  const expected = id(ctx.taskId);
+  const body = event.body;
+  if (!object(body)) throw new Error("SSE查询尚未包含完整的终态事件。");
+  const kind = text(body.event_type) || text(event.event);
+  const prior = object(previousState) ? previousState : {};
+  const state = Object.assign({ started: false, steps: {}, outputs: 0, last_event_id: "" }, prior,
+    { steps: Object.assign({}, prior.steps || {}) });
+  const changes = [];
+  const eventID = text(body.event_id);
+  if (eventID && eventID === state.last_event_id) return { changes, state, done: false };
+  if (eventID.length > 1024) throw new Error("SSE事件编号过长。");
+  if (eventID) state.last_event_id = eventID;
+  if (body.interaction_id !== undefined && body.interaction_id !== expected) {
+    throw new Error("SSE Interaction编号不匹配。");
+  }
+  if (kind === "interaction.created") {
+    const interaction = body.interaction;
+    if (!object(interaction) || interaction.id !== expected || state.started) {
+      throw new Error("SSE查询开始事件无效或编号不匹配。");
+    }
+    if (interaction.model !== undefined && interaction.model !== UPSTREAM_MODEL) {
+      throw new Error("SSE返回了非预期模型。");
+    }
+    state.started = true;
+    changes.push({ op: "set", path: [], value: { id: expected, status: "in_progress", outputs: [] } });
+  } else {
+    if (!state.started) throw new Error("SSE查询缺少开始事件。");
+    if (kind === "step.start") {
+      const index = number(body.index, "SSE步骤编号");
+      if (index > 1023 || state.steps[String(index)] || !object(body.step)) throw new Error("SSE步骤无效。");
+      state.steps[String(index)] = { type: text(body.step.type), stopped: false, slot: -1 };
+    } else if (kind === "step.delta") {
+      const index = number(body.index, "SSE步骤编号");
+      const step = state.steps[String(index)];
+      if (!step || step.stopped || !object(body.delta)) throw new Error("SSE内容缺少有效步骤。");
+      if (step.type === "model_output" && body.delta.type === "video") {
+        const delta = body.delta;
+        const mime = text(delta.mime_type) || text(step.mime) || "video/mp4";
+        if (!VIDEO_MIMES.includes(mime) || (step.mime && step.mime !== mime)) throw new Error("SSE视频MIME不一致。");
+        const data = delta.data;
+        const uri = delta.uri;
+        if ((data !== undefined && typeof data !== "string") ||
+            (uri !== undefined && typeof uri !== "string")) throw new Error("SSE视频内容格式不正确。");
+        if (data && (uri || step.has_uri) || uri && step.has_data) throw new Error("SSE视频交付方式冲突。");
+        const next = Object.assign({}, step, { mime });
+        if (next.slot < 0) {
+          if (state.outputs !== 0) throw new Error("隔离版本仅支持一个SSE视频结果。");
+          next.slot = state.outputs++;
+          changes.push({ op: "append", path: ["outputs"], value: { type: "video", mime_type: mime, data: "" } });
+        }
+        if (data) {
+          next.has_data = true;
+          changes.push({ op: "appendText", path: ["outputs", next.slot, "data"], value: data });
+        }
+        if (uri) {
+          next.has_uri = true;
+          changes.push({ op: "set", path: ["outputs", next.slot, "uri"], value: uri });
+        }
+        state.steps[String(index)] = next;
+      }
+      // Do not accumulate user inputs, thought summaries or signatures.
+    } else if (kind === "step.stop") {
+      const index = number(body.index, "SSE步骤编号");
+      const step = state.steps[String(index)];
+      if (!step || step.stopped) throw new Error("SSE步骤结束事件无效。");
+      state.steps[String(index)] = Object.assign({}, step, { stopped: true });
+    } else if (kind === "interaction.completed" || kind === "interaction.failed") {
+      const interaction = body.interaction;
+      if (!object(interaction) || interaction.id !== expected) throw new Error("SSE终态编号不匹配。");
+      const status = text(interaction.status);
+      if (!["completed", "failed", "cancelled", "incomplete", "budget_exceeded", "requires_action"].includes(status)) {
+        throw new Error("SSE结束事件并非终态。");
+      }
+      if (Object.values(state.steps).some(step => step.type === "model_output" && !step.stopped)) {
+        throw new Error("SSE视频步骤尚未结束。");
+      }
+      changes.push({ op: "set", path: ["status"], value: status });
+      if (object(interaction.usage)) changes.push({ op: "set", path: ["usage"], value: interaction.usage });
+      if (interaction.error !== undefined) changes.push({ op: "set", path: ["error"], value: interaction.error });
+      if (Array.isArray(interaction.errors)) changes.push({ op: "set", path: ["errors"], value: interaction.errors });
+      return { changes, state, done: true };
+    }
+  }
+  return { changes, state, done: false };
 }
 export function extractUsage(ctx) {
   const req = normalize(ctx.requestBody, ctx.model);

@@ -46,7 +46,8 @@ function mp4(seconds, resolution = "720p", version = 0, movieSeconds = seconds) 
 
 test("QA manifest does not intercept production Vertex, Veo or Omni models", () => {
   assert.equal(plugin.meta.key, "vertex-omni");
-  assert.equal(plugin.meta.version, "1.1.4");
+  assert.equal(plugin.meta.version, "1.2.0");
+  assert.deepEqual(plugin.meta.requiredCapabilities, ["query-sse-delta@1"]);
   assert.deepEqual(plugin.meta.models, [model]);
   assert.equal(plugin.meta.channelTypes, undefined);
   assert.equal(plugin.meta.dynamicModels, undefined);
@@ -342,7 +343,7 @@ test("submission persists small state; polling has no dependency on requestBody 
 test("poll lifecycle is strict and terminal errors remain legible", () => {
   for (const [status, expected, progress] of [["queued", "QUEUED", "0%"], ["in_progress", "IN_PROGRESS", "50%"],
     ["failed", "FAILURE", "100%"], ["cancelled", "FAILURE", "100%"], ["requires_action", "FAILURE", "100%"],
-    ["completed", "FAILURE", "100%"], ["new-provider-state", "UNKNOWN", undefined]]) {
+    ["completed", "IN_PROGRESS", "90%"], ["new-provider-state", "UNKNOWN", undefined]]) {
     const result = plugin.parseTaskResult({}, { id: "v1_fixture", status });
     assert.equal(result.status, expected);
     assert.equal(result.progress, progress);
@@ -355,7 +356,91 @@ test("poll lifecycle is strict and terminal errors remain legible", () => {
   const echoed = { id: "v1_fixture", status: "completed", steps: [
     { type: "user_input", content: [{ type: "video", mime_type: "video/mp4", data: "dmlkZW8=" }] },
   ] };
-  assert.equal(plugin.parseTaskResult({}, echoed).status, "FAILURE");
+  assert.equal(plugin.parseTaskResult({}, echoed).status, "IN_PROGRESS");
+});
+
+function applyChanges(root, changes) {
+  for (const change of changes) {
+    if (change.path.length === 0) { root = change.value; continue; }
+    const path = change.path.slice(), key = path.pop();
+    let parent = root;
+    for (const segment of path) parent = parent[segment];
+    if (change.op === "set") parent[key] = change.value;
+    else if (change.op === "append") parent[key].push(change.value);
+    else if (change.op === "appendText") parent[key] += change.value;
+    else assert.fail("Unknown change operation");
+  }
+  return root;
+}
+
+function replayEvents(events, taskId = "v1_fixture") {
+  let state = null, root = null, done = false;
+  for (const body of events) {
+    const delta = plugin.parseQueryEventDelta({ taskId }, { event: body.event_type, id: "", body }, state);
+    root = applyChanges(root, delta.changes);
+    state = delta.state;
+    done = delta.done;
+  }
+  return { root, state, done };
+}
+
+function queryEvents(data = "dmlkZW8=") {
+  return [
+    { event_type: "interaction.created", interaction: { id: "v1_fixture", status: "in_progress", model: upstream } },
+    { event_type: "step.start", index: 0, step: { type: "thought" } },
+    { event_type: "step.delta", index: 0, delta: { type: "thought_summary", content: { text: "not-public" } } },
+    { event_type: "step.stop", index: 0 },
+    { event_type: "step.start", index: 1, step: { type: "model_output" } },
+    { event_type: "step.delta", index: 1, event_id: "chunk1", delta: { type: "video", mime_type: "video/mp4", data } },
+    { event_type: "step.stop", index: 1 },
+    { event_type: "interaction.completed", interaction: { id: "v1_fixture", status: "completed", usage: { total_tokens: 42 } } },
+  ];
+}
+
+test("missing media in a completed JSON view triggers readonly SSE fallback, not failure/refund", () => {
+  const ctx = { ...driver(), taskId: "v1_fixture", state: { seconds: 10, resolution: "4k" } };
+  const first = plugin.parseTaskResult(ctx, { id: "v1_fixture", status: "completed" });
+  assert.equal(first.status, "IN_PROGRESS");
+  assert.equal(first.state.query_sse, true);
+  assert.equal(first.state.seconds, 10);
+  const query = plugin.buildQueryRequest({ ...ctx, state: first.state });
+  assert.equal(query.method, "GET");
+  assert.equal(query.responseType, "sse");
+  assert.equal(query.headers.Accept, "text/event-stream");
+  assert.match(query.url, /v1_fixture\?stream=true&include_input=false$/);
+  assert.equal(plugin.parseTaskResult({ ...ctx, state: first.state },
+    { id: "v1_fixture", status: "completed" }).status, "UNKNOWN");
+  assert.equal(plugin.parseTaskResult(ctx, { id: "v1_fixture", status: "failed" }).status, "FAILURE");
+});
+
+test("SSE deltas normalize real event shapes without persisting thoughts or media in control state", () => {
+  const { root, state, done } = replayEvents(queryEvents());
+  assert.equal(done, true);
+  assert.equal(root.status, "completed");
+  assert.deepEqual(root.outputs, [{ type: "video", mime_type: "video/mp4", data: "dmlkZW8=" }]);
+  assert.equal(root.usage.total_tokens, 42);
+  assert.ok(!JSON.stringify(root).includes("not-public"));
+  assert.ok(!JSON.stringify(state).includes("dmlkZW8="));
+  assert.equal(plugin.parseTaskResult({ taskId: "v1_fixture" }, root).status, "SUCCESS");
+});
+
+test("split video chunks and repeated event IDs reconstruct one result once", () => {
+  const events = queryEvents("dmlk");
+  const extra = { event_type: "step.delta", index: 1, event_id: "chunk2",
+    delta: { type: "video", mime_type: "video/mp4", data: "ZW8=" } };
+  events.splice(6, 0, extra, extra);
+  assert.equal(replayEvents(events).root.outputs[0].data, "dmlkZW8=");
+});
+
+test("SSE rejects wrong IDs, missing starts, unfinished steps and malformed video delivery", () => {
+  assert.throws(() => replayEvents(queryEvents(), "v1_wrong"), /编号/);
+  assert.throws(() => replayEvents(queryEvents().slice(1)), /开始事件/);
+  const unfinished = queryEvents(); unfinished.splice(6, 1);
+  assert.throws(() => replayEvents(unfinished), /尚未结束/);
+  const mismatch = queryEvents(); mismatch[5].interaction_id = "other";
+  assert.throws(() => replayEvents(mismatch), /编号/);
+  const malformed = queryEvents(); malformed[5].delta.uri = "gs://bucket/file.mp4";
+  assert.throws(() => replayEvents(malformed), /冲突/);
 });
 
 test("steps/outputs and flat/nested media produce results, including immediate completion", () => {
