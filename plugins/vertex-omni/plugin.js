@@ -13,7 +13,7 @@ export const meta = {
   key: "vertex-omni",
   name: "Vertex Omni",
   icon: "VertexAI.Color",
-  version: "1.1.1",
+  version: "1.1.2",
   author: { name: "88API", url: "https://github.com/blackdm666/88api-task-plugins" },
   description: {
     en: "Isolated Omni 1.1 video adapter with service-account authentication",
@@ -151,7 +151,10 @@ function mp4Facts(data) {
     if (movieTime + (movieVersion === 0 ? 8 : 12) > mvhd.end) return null;
     const movieScale = uint(movieTime, 4);
     const movieSeconds = uint(movieTime + 4, movieVersion === 0 ? 4 : 8) / movieScale;
-    if (!Number.isFinite(movieSeconds) || movieSeconds <= 0 || movieSeconds > 40.1) return null;
+    // The verified 40s video track has a 40.363s complete movie due to its
+    // generated audio tail. Bound the movie to 41s, while still bounding the
+    // video track to 40s (+0.1s metadata tolerance) below.
+    if (!Number.isFinite(movieSeconds) || movieSeconds <= 0 || movieSeconds > 41) return null;
     const videoTracks = [];
     for (const trak of movieChildren.filter(box => box.type === "trak")) {
       const children = boxes(trak.start, trak.end);
@@ -514,7 +517,7 @@ export function extractUsageOnComplete(ctx, result, data) {
   // client hint or a token-to-duration conversion.
   const state = ctx.state || {};
   if (facts) return { seconds: facts.seconds, resolution: facts.resolution };
-  if (Number.isFinite(state.output_seconds) && state.output_seconds > 0 && state.output_seconds <= 40.1 &&
+  if (Number.isFinite(state.output_seconds) && state.output_seconds > 0 && state.output_seconds <= 41 &&
       RESOLUTIONS.includes(state.output_resolution)) {
     return { seconds: state.output_seconds, resolution: state.output_resolution };
   }

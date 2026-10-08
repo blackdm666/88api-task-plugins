@@ -46,7 +46,7 @@ function mp4(seconds, resolution = "720p", version = 0, movieSeconds = seconds) 
 
 test("QA manifest does not intercept production Vertex, Veo or Omni models", () => {
   assert.equal(plugin.meta.key, "vertex-omni");
-  assert.equal(plugin.meta.version, "1.1.1");
+  assert.equal(plugin.meta.version, "1.1.2");
   assert.deepEqual(plugin.meta.models, [model]);
   assert.equal(plugin.meta.channelTypes, undefined);
   assert.equal(plugin.meta.dynamicModels, undefined);
@@ -214,6 +214,17 @@ test("extension bills the full playable movie when video and audio timelines dif
     assert.equal(result.status, "SUCCESS");
     assert.deepEqual(plugin.extractUsageOnComplete(query, result, data), { seconds: 9.024, resolution: "360p" });
     assert.equal(result.state.output_seconds, 9.024);
+  }
+});
+
+test("40s extension tolerates the verified audio tail but rejects oversized movie or video timelines", () => {
+  const query = { action: "extend", state: { task: "extend", seconds: 40 } };
+  const valid = completed({ type: "video", mime_type: "video/mp4", data: mp4(40, "360p", 0, 40.363) });
+  const result = plugin.parseTaskResult(query, valid);
+  assert.equal(result.status, "SUCCESS");
+  assert.deepEqual(plugin.extractUsageOnComplete(query, result, valid), { seconds: 40.363, resolution: "360p" });
+  for (const data of [mp4(40, "360p", 0, 41.001), mp4(41, "360p", 0, 41)]) {
+    assert.equal(plugin.parseTaskResult(query, completed({ type: "video", mime_type: "video/mp4", data })).status, "UNKNOWN");
   }
 });
 
