@@ -11,7 +11,7 @@ export const meta = {
   key: "vertex-omni",
   name: "Vertex Omni",
   icon: "VertexAI.Color",
-  version: "1.0.0",
+  version: "1.0.1",
   author: { name: "88API", url: "https://github.com/blackdm666/88api-task-plugins" },
   description: {
     en: "Isolated Omni 1.1 video adapter with service-account authentication",
@@ -188,7 +188,9 @@ export function buildSubmitRequest(ctx) {
   // Revalidate original inputs rather than trusting a supplied normalized object.
   const req = normalize(ctx.requestBody, ctx.model);
   const format = { type: "video", aspect_ratio: req.aspect_ratio, resolution: req.resolution,
-    duration: String(req.duration) };
+    // Google REST response_format duration includes its seconds unit ("3s").
+    // Keep request validation and billed usage numeric and unchanged.
+    duration: String(req.duration) + "s" };
   if (req.output_gcs_uri) Object.assign(format, { delivery: "uri", gcs_uri: req.output_gcs_uri });
   const body = {
     model: UPSTREAM_MODEL,

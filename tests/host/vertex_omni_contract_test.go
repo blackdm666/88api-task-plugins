@@ -79,7 +79,14 @@ func TestIndependentPluginCatalogueVertexOmniHTTP(t *testing.T) {
 			assert.Equal(t, "gemini-omni-1.1-flash-preview", body["model"])
 			assert.Equal(t, true, body["background"])
 			format := body["response_format"].([]any)[0].(map[string]any)
-			assert.Equal(t, "4", format["duration"])
+			// Google REST duration is a seconds-qualified string, not "4".
+			if format["duration"] != "4s" {
+				w.WriteHeader(http.StatusBadRequest)
+				_, err = io.WriteString(w, `{"error":{"message":"Invalid input at 'response_format[0]'.","code":"invalid_request"}}`)
+				require.NoError(t, err)
+				return
+			}
+			assert.Equal(t, "4s", format["duration"])
 			assert.Equal(t, "9:16", format["aspect_ratio"])
 			_, err = io.WriteString(w, `{"id":"v1_fixture","status":"in_progress"}`)
 			require.NoError(t, err)

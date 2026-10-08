@@ -17,7 +17,7 @@ Minimax-H3 与 XM-Video 的初始独立版本与当时88API镜像和生产自定
 
 ## Vertex Omni：隔离候选，尚未真实生成验收
 
-`vertex-omni@1.0.0` 是独立的 Vertex Interactions 视频插件，不覆盖
+`vertex-omni@1.0.1` 是独立的 Vertex Interactions 视频插件，不覆盖
 `vertex-ai`，不声明渠道类型41，不注册Veo、旧Omni或正式1.1模型名，
 也不启用动态模型接管。当前只声明 `vertex-omni-1.1-test`；默认发送精确
 上游ID `gemini-omni-1.1-flash-preview`，也允许测试渠道显式映射到该ID。
@@ -29,13 +29,14 @@ Minimax-H3 与 XM-Video 的初始独立版本与当时88API镜像和生产自定
   插件只读取Token和projectId，不接触原始私钥。
 - 使用global区域、`v1beta1/projects/<project>/locations/global/interactions`；
   请求为嵌套 `user_input.content`，`response_format` **数组**，包含
-  video、aspect_ratio、resolution及字符串duration。1.1不强制旧Api-Revision头。
+  video、aspect_ratio、resolution及带秒单位的字符串duration（如`"3s"`）。
+  1.1不强制旧Api-Revision头。
 - 使用 `background:true, store:true, stream:false` 提交，小响应后按ID轮询。
   支持 `steps`/`outputs`、嵌套/平铺视频输出，以及上游 `error`/`errors`。
   未知状态不伪装成进行中；不会把回显输入视频当作生成结果。
 - 这是**协议候选**：Node、真实Sobek、模拟OAuth和本地HTTP适配器回归
   不代表Google账号已获得1.1权限，也不代表后台模式、具体响应格式、
-  视频生成、输入时长匹配或真实收费已通过验收。尚未上传生产。
+  视频生成、输入时长匹配或真实收费已通过验收。
 - Google模型文档和Google官方MCP实现存在差异：后者的核验提交使用
   同步 `response_modalities`，未提供请求时长/比例控制；这里依据Google
   视频REST文档采用可明确约束时长的 `response_format`。没有在失败后自动
@@ -47,6 +48,12 @@ Minimax-H3 与 XM-Video 的初始独立版本与当时88API镜像和生产自定
 - [Google视频生成REST示例](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/video/generate-videos-from-text)
 - [Google视频编辑REST示例](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/video/edit-videos)
 - [Google官方参考实现，固定提交50a918c](https://github.com/GoogleCloudPlatform/genmedia-creative-studio/blob/50a918cfba4dc0384b6be474af9c90b6e4846d47/experiments/mcp-genmedia/mcp-genmedia-go/mcp-common/omni.go)
+
+`1.0.1`修正Google REST的duration单位：旧版发送`"3"`，现改为`"3s"`，
+与文档的`"5s"`/`"10s"`格式一致。仅修改传输封装；客户端仍传整数3–10，
+`extractUsage.seconds`和冻结任务state仍为数值，售价与组倍率不变。
+回归服务端显式拒绝无单位duration，避免旧版宽松fixture重复掩盖错误。
+这不代表仅凭文档或模拟结果即可断定真实生成已成功；实例验收另行记录。
 
 ### 首版刻意收窄的能力
 
@@ -96,7 +103,8 @@ GCS成品从固定`storage.googleapis.com` JSON下载入口读取并附Google OA
 不要盲目重发；当前宿主对部分JSON提交解析错误可能按渠道重试，
 隔离验收必须禁用该类提交重试，不能声称上游支持幂等。
 
-本版本是新key，无已验证旧版可激活；尚未安装生产，无需生产回滚。
+本插件使用独立key，发布历史可保留此前版本用于协议/版本回退；
+未完成真实生成验收的旧版不能被描述为已验证的可用生产版本。
 若日后安装失败，先停用测试渠道，再经官方插件状态入口停用独立插件，
 不删除历史任务，也不改原vertex-ai。
 

@@ -20,7 +20,7 @@ function completed(part = { type: "video", mime_type: "video/mp4", data: "dmlkZW
 
 test("QA manifest does not intercept production Vertex, Veo or Omni models", () => {
   assert.equal(plugin.meta.key, "vertex-omni");
-  assert.equal(plugin.meta.version, "1.0.0");
+  assert.equal(plugin.meta.version, "1.0.1");
   assert.deepEqual(plugin.meta.models, [model]);
   assert.equal(plugin.meta.channelTypes, undefined);
   assert.equal(plugin.meta.dynamicModels, undefined);
@@ -49,7 +49,7 @@ test("bounded usage and Interactions wire agree, including all supported duratio
     assert.deepEqual(request.body.input, [{ type: "user_input", content: [{ type: "text", text: "Fixture" }] }]);
     const usage = plugin.extractUsage(ctx);
     assert.deepEqual(request.body.response_format, [{
-      type: "video", aspect_ratio: "9:16", resolution: "720p", duration: String(usage.seconds),
+      type: "video", aspect_ratio: "9:16", resolution: "720p", duration: String(usage.seconds) + "s",
     }]);
     assert.equal(usage.resolution, "720p");
   }
