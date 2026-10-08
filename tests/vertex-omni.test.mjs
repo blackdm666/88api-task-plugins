@@ -46,7 +46,7 @@ function mp4(seconds, resolution = "720p", version = 0, movieSeconds = seconds) 
 
 test("QA manifest does not intercept production Vertex, Veo or Omni models", () => {
   assert.equal(plugin.meta.key, "vertex-omni");
-  assert.equal(plugin.meta.version, "1.1.2");
+  assert.equal(plugin.meta.version, "1.1.3");
   assert.deepEqual(plugin.meta.models, [model]);
   assert.equal(plugin.meta.channelTypes, undefined);
   assert.equal(plugin.meta.dynamicModels, undefined);
@@ -117,7 +117,7 @@ test("image/video references use documented typed parts without silently downloa
   assert.equal(request.body.input[0].content[2].uri, "gs://fixture-bucket/image.webp");
   assert.equal(request.body.previous_interaction_id, "v1_previous");
   assert.equal(request.body.response_format[0].delivery, "uri");
-  assert.equal(request.body.generation_config.video_config.task, "reference_to_video");
+  assert.equal(request.body.generation_config, undefined, "continuation inherits its mode");
   for (const value of [
     { images: "not-array" }, { videos: Array(4).fill("gs://fixture-bucket/a.mp4") },
     { images: Array(11).fill("gs://fixture-bucket/a.png") },
@@ -226,6 +226,14 @@ test("40s extension tolerates the verified audio tail but rejects oversized movi
   for (const data of [mp4(40, "360p", 0, 41.001), mp4(41, "360p", 0, 41)]) {
     assert.equal(plugin.parseTaskResult(query, completed({ type: "video", mime_type: "video/mp4", data })).status, "UNKNOWN");
   }
+});
+
+test("multi-turn inherits the previous video mode and never sends a conflicting task", () => {
+  const request = plugin.buildSubmitRequest(driver({ previous_interaction_id: "v1_previous", temperature: 0, top_p: 1 }));
+  assert.equal(request.body.previous_interaction_id, "v1_previous");
+  assert.deepEqual(request.body.generation_config, { temperature: 0, top_p: 1 });
+  assert.equal(plugin.buildSubmitRequest(driver({ previous_interaction_id: "v1_previous" })).body.generation_config, undefined);
+  assert.throws(() => decode({ previous_interaction_id: "v1_previous", task: "text_to_video" }), /不能同时指定/);
 });
 
 test("all documented resolution and orientation sizes agree with wire and frozen usage", () => {

@@ -38,7 +38,7 @@ Minimax-H3 与 XM-Video 的初始独立版本与当时88API镜像和生产自定
 
 ## Vertex Omni：独立隔离测试版
 
-`vertex-omni@1.1.2` 是独立的 Vertex Interactions 视频插件，不覆盖
+`vertex-omni@1.1.3` 是独立的 Vertex Interactions 视频插件，不覆盖
 `vertex-ai`，不声明渠道类型41，不注册Veo、旧Omni或正式1.1模型名，
 也不启用动态模型接管。当前只声明 `vertex-omni-1.1-test`；默认发送精确
 上游ID `gemini-omni-1.1-flash-preview`，也允许测试渠道显式映射到该ID。
@@ -99,6 +99,8 @@ Minimax-H3 与 XM-Video 的初始独立版本与当时88API镜像和生产自定
   文件或GCS对象。普通参考视频及文件/GCS的实际输入时长由Google校验。
 - 顶层或`metadata.previous_interaction_id`支持继续Interaction，必须是Google ID，
   不是本站task_id；客户端须保留同账号/项目的上轮上下文。
+  1.1.3继承前一轮模式，不再同时发送video_config.task（真实接口禁止此组合）；
+  多轮不能再显式设置task或首尾帧模式，采样与输出格式控制仍独立保留。
   可选`metadata.output_gcs_uri`要求服务账号有相应存储权限。
 - edit/extend不能指定比例或size，避免Google真实400；edit默认使用最小输出格式，
   显式分辨率写入resolution。官方编辑示例写成output，但真实接口明确拒绝

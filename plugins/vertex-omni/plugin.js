@@ -13,7 +13,7 @@ export const meta = {
   key: "vertex-omni",
   name: "Vertex Omni",
   icon: "VertexAI.Color",
-  version: "1.1.2",
+  version: "1.1.3",
   author: { name: "88API", url: "https://github.com/blackdm666/88api-task-plugins" },
   description: {
     en: "Isolated Omni 1.1 video adapter with service-account authentication",
@@ -353,6 +353,9 @@ function normalize(req, model) {
   const previous = field([req.previous_interaction_id, metadata.previous_interaction_id], undefined, id, "Interaction 编号");
   const output = metadata.output_gcs_uri;
   if (previous !== undefined) id(previous);
+  if (previous !== undefined && (requestedTask !== undefined || firstFrame !== undefined || lastFrame !== undefined)) {
+    throw new Error("多轮请求不能同时指定 task 或首尾帧模式，请沿用上一轮上下文。");
+  }
   if (output !== undefined) gcs(output);
   if (inferredTask === "extend" && output !== undefined) {
     throw new Error("延长任务需返回内联 MP4 用于完整时长结算，请移除 output_gcs_uri。");
@@ -406,12 +409,13 @@ export function buildSubmitRequest(ctx) {
     // Keep submit small: the host's JSON submit reader is limited to 1 MiB.
     // Large inline video results are read on polling and archived by the host.
     background: true, store: true, stream: false,
-    generation_config: {
-      video_config: { task: req.task },
-    },
   };
-  if (req.temperature !== undefined) body.generation_config.temperature = req.temperature;
-  if (req.top_p !== undefined) body.generation_config.top_p = req.top_p;
+  // The real service forbids previous_interaction_id together with an
+  // explicit video task. Continuations inherit the stored interaction mode.
+  const generation = req.previous_interaction_id ? {} : { video_config: { task: req.task } };
+  if (req.temperature !== undefined) generation.temperature = req.temperature;
+  if (req.top_p !== undefined) generation.top_p = req.top_p;
+  if (Object.keys(generation).length) body.generation_config = generation;
   if (req.previous_interaction_id) body.previous_interaction_id = req.previous_interaction_id;
   const conn = connection(ctx);
   return { url: conn.url, method: "POST", headers: conn.headers, body, action: req.action };
