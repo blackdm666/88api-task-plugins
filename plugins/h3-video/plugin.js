@@ -13,7 +13,7 @@ export const meta = {
   key: "h3-video",
   name: "H3-Video",
   description: { en: "MiniMax H3 video integration", zh: "MiniMax H3 视频集成" },
-  version: "1.0.1",
+  version: "1.0.2",
   author: { name: "88API" },
   models: [],
   dynamicModels: true,
@@ -28,7 +28,12 @@ export const meta = {
     // Upstream per-second price tiers; a new upstream tier needs a plugin update and pricing.
     resolution: {
       enum: RESOLUTIONS,
-      enumLabels: Object.fromEntries(RESOLUTIONS.map(function (value) { return [value, { en: value.toUpperCase(), zh: value.toUpperCase() }]; })),
+      // 2K/4K come from the upstream upscaling workflows, not native generation.
+      enumLabels: Object.fromEntries(RESOLUTIONS.map(function (value) {
+        const name = value.toUpperCase();
+        if (value !== "2k" && value !== "4k") return [value, { en: name, zh: name }];
+        return [value, { en: name + " (upscaled)", zh: name + "（超分）" }];
+      })),
       description: { en: "Output video resolution", zh: "输出视频分辨率" },
     },
   },
