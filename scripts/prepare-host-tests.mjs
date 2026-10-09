@@ -31,6 +31,8 @@ await copyFile(path.join(root, 'tests', 'host', 'xm_video_vs25_test.go'),
   path.join(host, 'pkg', 'jsplugin', 'independent_xm_video_vs25_test.go'))
 await copyFile(path.join(root, 'tests', 'host', 'minimax_h3_async_test.go'),
   path.join(host, 'pkg', 'jsplugin', 'independent_minimax_h3_async_test.go'))
+await copyFile(path.join(root, 'tests', 'host', 'h3_video_contract_test.go'),
+  path.join(host, 'pkg', 'jsplugin', 'independent_h3_video_contract_test.go'))
 await copyFile(path.join(root, 'tests', 'host', 'gx_video_contract_test.go'),
   path.join(host, 'pkg', 'jsplugin', 'independent_gx_video_contract_test.go'))
 await copyFile(path.join(root, 'tests', 'host', 'sdgo_video_contract_test.go'),
