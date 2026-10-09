@@ -71,7 +71,7 @@ function mp4(seconds, resolution = "720p", version = 0, movieSeconds = seconds) 
 
 test("manifest claims exactly the four public names, never type 41, upstream IDs or Lite", () => {
   assert.equal(plugin.meta.key, "vertex-omni");
-  assert.equal(plugin.meta.version, "1.6.1");
+  assert.equal(plugin.meta.version, "1.6.2");
   assert.deepEqual(plugin.meta.requiredCapabilities, ["task-preflight@1"], "no SSE host capability");
   assert.deepEqual(plugin.meta.allowedHosts, ["storage.googleapis.com", "us-central1-aiplatform.googleapis.com", "assets.88api.ai"]);
   assert.deepEqual([...plugin.meta.models].sort(), [model, flashModel, veoModel, veoFastModel].sort());
@@ -691,4 +691,17 @@ test("360p is not sold: Omni 1.1 upgrades it to 720p and the billing schema omit
   assert.equal(plugin.buildSubmitRequest(driver({ resolution: "360p" }, flashModel, flashModel)).body.response_format[0].resolution, "720p");
   assert.throws(() => decode({ resolution: "1080p" }, flashModel), /仅支持 720p/, "Flash rejects unsupported resolutions");
   assert.throws(() => decode({ resolution: "360p" }, veoModel), /720p、1080p 或 4k/);
+});
+
+test("size also accepts a bare ratio, as older documentation showed", () => {
+  for (const [name, upstreamName] of [[flashModel, "gemini-omni-flash-preview"], [model, upstream]]) {
+    const body = plugin.buildSubmitRequest(driver({ size: "9:16" }, name, upstreamName)).body;
+    assert.deepEqual([body.response_format[0].aspect_ratio, body.response_format[0].resolution], ["9:16", "720p"]);
+  }
+  const fourK = plugin.buildSubmitRequest(driver({ size: "16:9", resolution: "4k" })).body.response_format[0];
+  assert.deepEqual([fourK.aspect_ratio, fourK.resolution], ["16:9", "4k"]);
+  const veo = plugin.buildSubmitRequest(driver({ size: "9:16", resolution: "1080p" }, veoModel, veoModel)).body.parameters;
+  assert.deepEqual([veo.aspectRatio, veo.resolution], ["9:16", "1080p"]);
+  assert.throws(() => decode({ size: "9:16", aspect_ratio: "16:9" }), /冲突/);
+  assert.throws(() => decode({ size: "1:1" }), /size 必须为 16:9、9:16/);
 });
