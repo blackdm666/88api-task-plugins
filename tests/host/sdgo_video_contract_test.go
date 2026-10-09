@@ -18,7 +18,7 @@ func TestIndependentPluginCatalogueSDGOVideoContract(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "sdgo-video", plugin.Meta.Key)
 	assert.Equal(t, "SD-Video", plugin.Meta.Name)
-	assert.Equal(t, "1.1.3", plugin.Meta.Version)
+	assert.Equal(t, "1.2.0", plugin.Meta.Version)
 	assert.True(t, plugin.Meta.DynamicModels)
 	assert.Equal(t, []string{
 		"doubao-seedance-2-0-mini-260615",
@@ -87,6 +87,33 @@ func TestIndependentPluginCatalogueSDGOVideoContract(t *testing.T) {
 	assetBody := assetDecoded.(map[string]any)["requestBody"].(map[string]any)
 	assert.Equal(t, "asset", assetBody["image_source_mode"])
 	assert.Equal(t, "asset", assetBody["video_source_mode"])
+
+	singularDecoded, err := plugin.Engine.CallPath(context.Background(), "protocols",
+		[]string{"openai_video", "decodeRequest"}, map[string]any{
+			"model": "doubao-seedance-2-5-260628",
+			"body": map[string]any{"kind": "json", "value": map[string]any{
+				"prompt": "Singular fixture", "duration": 6, "size": "9:16",
+				"image": "https://example.invalid/image.png",
+				"video": "https://example.invalid/video.mp4",
+			}},
+		})
+	require.NoError(t, err)
+	singularBody := singularDecoded.(map[string]any)["requestBody"].(map[string]any)
+	assert.Equal(t, "9:16", singularBody["ratio"])
+	assert.NotContains(t, singularBody, "size")
+	assert.Equal(t, []any{
+		map[string]any{"type": "text", "text": "Singular fixture"},
+		map[string]any{"type": "image_url", "role": "reference_image", "image_url": map[string]any{"url": "https://example.invalid/image.png"}},
+		map[string]any{"type": "video_url", "role": "reference_video", "video_url": map[string]any{"url": "https://example.invalid/video.mp4"}},
+	}, singularBody["content"])
+	_, err = plugin.Engine.CallPath(context.Background(), "protocols",
+		[]string{"openai_video", "decodeRequest"}, map[string]any{
+			"model": "doubao-seedance-2-5-260628",
+			"body": map[string]any{"kind": "json", "value": map[string]any{
+				"prompt": "Conflict fixture", "size": "9:16", "ratio": "16:9",
+			}},
+		})
+	require.ErrorContains(t, err, "画幅比例参数不一致")
 
 	value, err := plugin.Engine.Call(context.Background(), "buildSubmitRequest", map[string]any{
 		"model": "doubao-seedance-2-5-260628",

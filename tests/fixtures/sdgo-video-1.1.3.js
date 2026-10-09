@@ -97,7 +97,7 @@ export const meta = {
   apiVersion: 1,
   key: "sdgo-video",
   name: "SD-Video",
-  version: "1.2.0",
+  version: "1.1.3",
   author: { name: "88API" },
   description: {
     en: "Seedance video generation through the SDGO OpenAI-compatible task API",
@@ -397,18 +397,15 @@ function payloadFor(request, model, upstreamModel, options = {}) {
   if (lastFrame) frameItems.push(contentItem("image", urlFor(lastFrame, "尾帧", "image"), "last_frame"));
   appendUnique(content, frameItems);
   appendUnique(content, mediaItems(
-    [
-      ...asArray(all.images), ...asArray(all.image_urls), ...asArray(all.referenceImages), ...asArray(all.reference_images),
-      ...asArray(all.image), ...asArray(all.input_reference),
-    ],
+    [...asArray(all.images), ...asArray(all.image_urls), ...asArray(all.referenceImages), ...asArray(all.reference_images)],
     "参考图片", "image", "reference_image",
   ));
   appendUnique(content, mediaItems(
-    [...asArray(all.videos), ...asArray(all.video_urls), ...asArray(all.referenceVideos), ...asArray(all.reference_videos), ...asArray(all.video)],
+    [...asArray(all.videos), ...asArray(all.video_urls), ...asArray(all.referenceVideos), ...asArray(all.reference_videos)],
     "参考视频", "video", "reference_video",
   ));
   appendUnique(content, mediaItems(
-    [...asArray(all.audios), ...asArray(all.audio_urls), ...asArray(all.referenceAudios), ...asArray(all.reference_audios), ...asArray(all.audio)],
+    [...asArray(all.audios), ...asArray(all.audio_urls), ...asArray(all.referenceAudios), ...asArray(all.reference_audios)],
     "参考音频", "audio", "reference_audio",
   ));
   const media = parseMediaFromContent(content);
@@ -432,21 +429,8 @@ function payloadFor(request, model, upstreamModel, options = {}) {
   if (duration === -1 && (cfg.family === "1.0" || cfg.family === "1.0-fast")) {
     throw new Error("Seedance 1.0 不支持 -1 时长。");
   }
-  // SDGO documents no size field. A ratio or tier written in size is used as
-  // that field; pixel sizes keep their previous passthrough.
-  const size = first(all.size).toLowerCase();
-  const sizeRatio = RATIOS.includes(size) ? size : "";
-  const sizeResolution = RESOLUTIONS.includes(size) ? size : "";
-  const explicitRatio = first(all.ratio, all.aspect_ratio);
-  const explicitResolution = first(all.resolution, all.quality, all.vquality);
-  if (sizeRatio && explicitRatio && explicitRatio !== sizeRatio) {
-    throw new Error("画幅比例参数不一致：size 与 ratio/aspect_ratio 请只填写一个，或保持相同。");
-  }
-  if (sizeResolution && explicitResolution && explicitResolution.toLowerCase() !== sizeResolution) {
-    throw new Error("分辨率参数不一致：size 与 resolution 请只填写一个，或保持相同。");
-  }
-  const resolution = resolutionFor(explicitResolution || sizeResolution, cfg);
-  const ratio = ratioFor(explicitRatio || sizeRatio, cfg, hasFrame);
+  const resolution = resolutionFor(first(all.resolution, all.quality, all.vquality), cfg);
+  const ratio = ratioFor(first(all.ratio, all.aspect_ratio), cfg, hasFrame);
   const body = { model: upstream, content, resolution, ratio };
   if (duration === -1 && options.hostSafe) {
     // NewAPI validates the decoded request recursively before it calls the
@@ -526,9 +510,7 @@ function payloadFor(request, model, upstreamModel, options = {}) {
     if (body.service_tier === "flex") throw new Error("priority 不能与 service_tier=flex 同时使用。");
     body.priority = priority;
   }
-  const forward = Object.assign({}, all);
-  if (sizeRatio || sizeResolution) delete forward.size;
-  return copyForwardFields(body, forward);
+  return copyForwardFields(body, all);
 }
 
 function normalizeImplicitVideoEdit(body) {
@@ -573,7 +555,7 @@ function parseMultipart(ctx) {
     if (files.length !== 1 || !/^image\//i.test(text(files[0].mimeType))) {
       throw new Error("SDGO 仅可将一个本地图片文件内联为图片素材；本地视频请先上传到 SDGO，再提交 tos:// 或 asset:// 地址。");
     }
-    if (req.images || req.image || req.input_reference || req.image_urls || req.content) {
+    if (req.images || req.image || req.image_urls || req.content) {
       throw new Error("本地图片文件不能与图片或 content 参数同时使用，请只保留一种方式。");
     }
     req.images = [{

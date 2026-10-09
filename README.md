@@ -406,6 +406,14 @@ Provider-native top-level fields outside the XM compatibility surface are
 forwarded unchanged, including `callback_url`; the adapter does not rewrite
 that callback to a NewAPI or Volcano endpoint. Site-compatible fields are
 still normalized so existing XM clients keep working.
+Since 1.2.0 the singular fields `image` and `input_reference` are read as
+reference images, `video` as a reference video, and `audio` as reference
+audio, under the same limits as their list forms; 1.1.3 silently dropped them.
+A `size` holding a supported ratio (`9:16`) or tier (`1080p`) is used as
+`ratio` or `resolution` and is no longer forwarded, and a `size` that
+contradicts an explicit ratio or resolution returns a 400. Pixel sizes such as
+`1280x720` and `callback_url` are still forwarded unchanged. Requests without
+those inputs are asserted identical to the archived production 1.1.3.
 Media supplied to the official endpoint must be reachable by both SDGO and
 the upstream Ark service. The plugin does not put API keys or channel
 configuration in this repository.

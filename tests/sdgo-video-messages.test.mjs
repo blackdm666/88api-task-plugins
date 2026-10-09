@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict'
+import { createHash } from 'node:crypto'
+import { readFile } from 'node:fs/promises'
 import test from 'node:test'
 import * as plugin from '../plugins/sdgo-video/plugin.js'
+import * as old from './fixtures/sdgo-video-1.1.3.js'
 
 const image = 'https://example.invalid/image.png'
 const lastImage = 'https://example.invalid/last.png'
@@ -17,7 +20,7 @@ function decode(value = {}, model = 'doubao-seedance-2-5-260628') {
 test('declares the SDGO dynamic plugin and official models remain discoverable', () => {
   assert.equal(plugin.meta.key, 'sdgo-video')
   assert.equal(plugin.meta.name, 'SD-Video')
-  assert.equal(plugin.meta.version, '1.1.3')
+  assert.equal(plugin.meta.version, '1.2.0')
   assert.deepEqual(plugin.meta.requiredCapabilities, ['task-preflight@1'])
   assert.equal(plugin.meta.dynamicModels, true)
   assert.deepEqual(plugin.meta.models, [
@@ -552,4 +555,162 @@ test('passes callback_url through unchanged for upstream delivery', () => {
     requestBody: decoded.requestBody,
   })
   assert.equal(submitted.body.callback_url, callback_url)
+})
+
+function submit(decoded) {
+  return plugin.buildSubmitRequest({
+    model: decoded.model,
+    upstreamModel: decoded.model,
+    requestBody: decoded.requestBody,
+    baseUrl: 'https://sdgo.top',
+    apiKey: 'fixture',
+  })
+}
+
+test('1.2.0 merges singular image, input_reference, video, and audio into the media lists', () => {
+  const singular = { prompt: 'Fixture prompt', image, input_reference: { url: lastImage }, video, audio }
+  const dropped = old.decodeRequest({ model: 'doubao-seedance-2-5-260628', body: { kind: 'json', value: singular } })
+  assert.deepEqual(dropped.requestBody.content, [{ type: 'text', text: 'Fixture prompt' }])
+  const decoded = decode(singular)
+  assert.equal(decoded.action, 'image_to_video')
+  assert.deepEqual(decoded.requestBody.content.slice(1), [
+    { type: 'image_url', role: 'reference_image', image_url: { url: image } },
+    { type: 'image_url', role: 'reference_image', image_url: { url: lastImage } },
+    { type: 'video_url', role: 'reference_video', video_url: { url: video } },
+    { type: 'audio_url', role: 'reference_audio', audio_url: { url: audio } },
+  ])
+  assert.deepEqual(submit(decoded).body.content, decoded.requestBody.content)
+  assert.equal(plugin.extractUsage({ requestBody: decoded.requestBody }).video_input, 'present')
+
+  const fromMetadata = decode({ metadata: { image, video } })
+  assert.equal(fromMetadata.requestBody.content.length, 3)
+  const duplicate = decode({ images: [image], image, input_reference: image })
+  assert.deepEqual(duplicate.requestBody.content.slice(1), [
+    { type: 'image_url', role: 'reference_image', image_url: { url: image } },
+  ])
+  const multipart = plugin.decodeRequest({
+    model: 'doubao-seedance-2-5-260628',
+    body: { kind: 'multipart', fields: { prompt: ['Multipart fixture'], image: [image], video: [video] } },
+  })
+  assert.equal(multipart.requestBody.content.length, 3)
+  for (const key of ['image', 'input_reference', 'video', 'audio']) {
+    assert.equal(decoded.requestBody[key], undefined, key)
+  }
+})
+
+test('1.2.0 applies the existing media limits to singular fields', () => {
+  assert.throws(() => decode({ images: Array.from({ length: 30 }, (_, i) => `${image}?i=${i}`), image: lastImage }), /参考图片过多/)
+  assert.throws(() => decode({ audio }, 'doubao-seedance-2-0-260128'), /必须同时提供参考图片或参考视频/)
+  assert.throws(() => decode({ firstFrame: image, input_reference: lastImage }), /不能与参考图片、视频或音频混用/)
+  assert.throws(() => decode({ image: 'http://example.invalid/image.png' }), /HTTPS、asset/)
+  assert.throws(() => plugin.decodeRequest({
+    model: 'doubao-seedance-2-5-260628',
+    body: {
+      kind: 'multipart',
+      fields: { prompt: ['Local image'], input_reference: [image] },
+      files: [{ field: 'image', ref: 'request_file:image', filename: 'a.png', mimeType: 'image/png', size: 12 }],
+    },
+  }), /本地图片文件不能与图片或 content 参数同时使用/)
+})
+
+test('1.2.0 reads a ratio or resolution written in size and stops forwarding it', () => {
+  const ignored = old.decodeRequest({ model: 'doubao-seedance-2-5-260628', body: { kind: 'json', value: { prompt: 'Fixture prompt', size: '9:16' } } })
+  assert.equal(ignored.requestBody.ratio, 'adaptive')
+  assert.equal(ignored.requestBody.size, '9:16')
+  const ratio = decode({ size: '9:16' })
+  assert.equal(ratio.requestBody.ratio, '9:16')
+  assert.equal(ratio.requestBody.size, undefined)
+  assert.equal(submit(ratio).body.ratio, '9:16')
+  assert.equal(submit(ratio).body.size, undefined)
+
+  const resolution = decode({ size: '1080P', duration: 6 })
+  assert.equal(resolution.requestBody.resolution, '1080p')
+  assert.equal(resolution.requestBody.size, undefined)
+  assert.deepEqual(plugin.extractUsage({ requestBody: resolution.requestBody }), {
+    seconds: 6,
+    resolution: '1080p',
+    video_input: 'none',
+  })
+  assert.equal(decode({ size: '4K' }, 'doubao-seedance-2-0-260128').requestBody.resolution, '4k')
+  assert.equal(decode({ size: '16:9', ratio: '16:9' }).requestBody.ratio, '16:9')
+  assert.equal(decode({ size: '720p', metadata: { resolution: '720p' } }).requestBody.resolution, '720p')
+  assert.equal(decode({ size: '1280x720' }).requestBody.size, '1280x720')
+})
+
+test('1.2.0 rejects size values that conflict with or are unsupported by the model in Chinese', () => {
+  assert.throws(() => decode({ size: '9:16', ratio: '16:9' }), /画幅比例参数不一致：size 与 ratio\/aspect_ratio/)
+  assert.throws(() => decode({ size: '1:1', aspect_ratio: '4:3' }), /画幅比例参数不一致/)
+  assert.throws(() => decode({ size: '1080p', resolution: '720p' }), /分辨率参数不一致：size 与 resolution/)
+  assert.throws(() => decode({ size: '1080p' }, 'doubao-seedance-2-0-mini-260615'), /当前模型不支持该分辨率/)
+  assert.throws(() => decode({ size: '16:9', firstFrame: image }), /必须使用 adaptive/)
+})
+
+test('requests without singular media or a ratio/resolution size are identical to deployed 1.1.3', async () => {
+  const source = (await readFile(new URL('./fixtures/sdgo-video-1.1.3.js', import.meta.url), 'utf8')).replace(/\r\n/g, '\n')
+  // Production task_plugins sdgo-video 1.1.3 source_hash, checked 2026-10-10.
+  assert.equal(createHash('sha256').update(source).digest('hex'), 'fe92c3bee679e8b80b9c02f18dfae7fe9faa335ed1aa4b6347af028cd7c75b9e')
+  const callback_url = 'https://client.example.test/hooks/sdgo-task'
+  const inputs = [
+    {},
+    { ratio: '16:9', resolution: '1080p', duration: 8 },
+    { aspect_ratio: '9:16', quality: '480p' },
+    { size: '1280x720' },
+    { size: '1280x720', ratio: '1:1', resolution: '720p' },
+    { size: 'auto', seed: 7 },
+    { size: 1080 },
+    { referenceImages: [image], referenceVideos: [video], referenceAudios: [audio] },
+    { images: [image], image_urls: [lastImage], videos: [video], audios: [audio] },
+    { firstFrame: image, lastFrame: lastImage },
+    { firstFrame: image, ratio: 'adaptive', duration: 5 },
+    { metadata: { ratio: '1:1', duration: 6, referenceImages: [image] } },
+    { metadata: JSON.stringify({ resolution: '480p' }) },
+    { duration: -1, videos: [video] },
+    { referenceVideos: ['asset://video-asset-1'], omniReferenceTaskType: 'edit' },
+    { content: [{ type: 'text', text: 'Content fixture' }, { type: 'image_url', role: 'reference_image', image_url: { url: image } }] },
+    { callback_url, generateAudio: false, service_tier: 'flex' },
+    { resolution: '4k' },
+    { duration: 3 },
+    { lastFrame: lastImage },
+    { audios: [audio] },
+    { firstFrame: image, images: [lastImage] },
+    { ratio: '5:4' },
+  ]
+  const models = [
+    'doubao-seedance-2-5-260628',
+    'doubao-seedance-2-0-260128',
+    'doubao-seedance-2-0-mini-260615',
+    'doubao-seedance-2-0-fast-260128',
+    'doubao-seedance-1-0-pro-250528',
+  ]
+  let compared = 0
+  for (const model of models) {
+    for (const input of inputs) {
+      const ctx = { model, body: { kind: 'json', value: { prompt: 'Fixture prompt', ...input } } }
+      let expected
+      try {
+        expected = old.decodeRequest(ctx)
+      } catch (error) {
+        assert.throws(() => plugin.decodeRequest(ctx), { message: error.message }, JSON.stringify({ model, input }))
+        continue
+      }
+      const decoded = plugin.decodeRequest(ctx)
+      assert.deepEqual(decoded, expected, JSON.stringify({ model, input }))
+      const driver = { model, upstreamModel: model, requestBody: decoded.requestBody, baseUrl: 'https://sdgo.top', apiKey: 'fixture' }
+      assert.deepEqual(plugin.buildSubmitRequest(driver), old.buildSubmitRequest(driver))
+      assert.deepEqual(plugin.extractUsage(driver), old.extractUsage(driver))
+      const response = { body: { id: 'task_fixture', status: 'queued', model } }
+      assert.deepEqual(plugin.parseSubmitResponse(driver, response), old.parseSubmitResponse(driver, response))
+      compared++
+    }
+  }
+  assert.ok(compared > 50, `compared ${compared} accepted requests`)
+  const multipart = {
+    model: 'doubao-seedance-2-5-260628',
+    body: {
+      kind: 'multipart',
+      fields: { prompt: ['Local image'], ratio: ['adaptive'] },
+      files: [{ field: 'image', ref: 'request_file:image', filename: 'a.png', mimeType: 'image/png', size: 12 }],
+    },
+  }
+  assert.deepEqual(plugin.decodeRequest(multipart), old.decodeRequest(multipart))
 })
