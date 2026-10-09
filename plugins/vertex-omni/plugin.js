@@ -32,7 +32,7 @@ const MODELS = {
 };
 function spec(model) {
   if (typeof model !== "string" || !Object.prototype.hasOwnProperty.call(MODELS, model)) {
-    throw new Error("此版本仅接受模型 " + Object.keys(MODELS).join("、") + "。");
+    throw new Error("不支持该模型，可用模型：" + Object.keys(MODELS).join("、") + "。");
   }
   return MODELS[model];
 }
@@ -55,7 +55,7 @@ export const meta = {
   key: "vertex-omni",
   name: "Vertex Video",
   icon: "VertexAI.Color",
-  version: "1.6.0",
+  version: "1.6.1",
   // HTTP(S) inputs are copied to GCS before submit; requires host preflight.
   requiredCapabilities: ["task-preflight@1"],
   author: { name: "88API", url: "https://github.com/blackdm666/88api-task-plugins" },
@@ -134,7 +134,7 @@ function gcs(value) {
 }
 function base64(value, limit) {
   const padding = value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0;
-  if (value.length / 4 * 3 - padding > limit) throw new Error("素材大小超过隔离版本限制。");
+  if (value.length / 4 * 3 - padding > limit) throw new Error("素材大小超过 " + Math.floor(limit / 1024 / 1024) + "MiB 限制。");
   // A flat character-class avoids V8 regex stack exhaustion on large media.
   if (!value || value.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(value)) {
     throw new Error("素材必须包含有效的 Base64 数据。");
@@ -380,12 +380,12 @@ function normalize(req, model) {
     throw new Error("延长视频仅支持 720p 或 1080p 输出（上游不支持 4K 延长），未指定时为 720p。");
   }
   for (const count of [req.n, req.sample_count, metadata.sampleCount, metadata.candidate_count]) {
-    if (count !== undefined && number(count, "视频数量") !== 1) throw new Error("隔离版本仅支持单个视频结果。");
+    if (count !== undefined && number(count, "视频数量") !== 1) throw new Error("每次请求只生成 1 个视频，n 只能为 1。");
   }
   // No arbitrary generation_config/response_format passthrough: usage must
   // describe exactly the single, bounded request that reaches the provider.
   for (const key of ["response_format", "generation_config", "background", "store", "stream"]) {
-    if (req[key] !== undefined) throw new Error(key + "由插件管理，不接受客户端覆盖。");
+    if (req[key] !== undefined) throw new Error(key + "由平台管理，请勿在请求中传入。");
   }
   if (req.audio !== undefined || req.audios !== undefined || metadata.audio !== undefined || metadata.audios !== undefined) {
     throw new Error(sp.label + " 不支持独立音频输入。");
@@ -394,7 +394,7 @@ function normalize(req, model) {
   const topP = optionalDecimal([req.top_p, req.topP, metadata.top_p, metadata.topP], undefined, "top_p");
   if (temperature !== undefined && (temperature < 0 || temperature > 2)) throw new Error("temperature 必须在 0 到 2 之间。");
   if (topP !== undefined && (topP < 0 || topP > 1)) throw new Error("top_p 必须在 0 到 1 之间。");
-  if (images.length > 10 || videos.length > 3) throw new Error("隔离版本最多接受 10 张参考图和 3 个参考视频。");
+  if (images.length > 10 || videos.length > 3) throw new Error("最多接受 10 张参考图和 3 个参考视频。");
   if (["edit", "extend"].includes(inferredTask) && images.length > 0) {
     throw new Error("视频编辑或延长不能同时提供参考图片。");
   }
@@ -409,7 +409,7 @@ function normalize(req, model) {
   if (previous !== undefined && (requestedTask !== undefined || firstFrame !== undefined || lastFrame !== undefined)) {
     throw new Error("多轮请求不能同时指定 task 或首尾帧模式，请沿用上一轮上下文。");
   }
-  if (metadata.output_gcs_uri !== undefined) throw new Error("输出位置由插件管理，请移除 metadata.output_gcs_uri。");
+  if (metadata.output_gcs_uri !== undefined) throw new Error("输出位置由平台管理，请移除 metadata.output_gcs_uri。");
   return { family: "omni", model, upstream: sp.upstream, prompt, duration: seconds, input_duration: inputSeconds,
     task: inferredTask, aspect_ratio: ratio, resolution, explicit_resolution: explicitResolution, temperature,
     top_p: topP, content, previous_interaction_id: previous, action: inferredTask };
@@ -501,10 +501,10 @@ function normalizeVeo(req, model, sp) {
     return result;
   }, "seed");
   for (const count of [req.n, req.sample_count, metadata.sampleCount, metadata.candidate_count]) {
-    if (count !== undefined && number(count, "视频数量") !== 1) throw new Error("隔离版本仅支持单个视频结果。");
+    if (count !== undefined && number(count, "视频数量") !== 1) throw new Error("每次请求只生成 1 个视频，n 只能为 1。");
   }
   for (const key of ["response_format", "generation_config", "background", "store", "stream", "parameters", "instances"]) {
-    if (req[key] !== undefined) throw new Error(key + "由插件管理，不接受客户端覆盖。");
+    if (req[key] !== undefined) throw new Error(key + "由平台管理，请勿在请求中传入。");
   }
   for (const key of ["temperature", "top_p", "topP", "previous_interaction_id"]) {
     if (req[key] !== undefined || metadata[key] !== undefined) throw new Error(sp.label + " 不支持 " + key + "。");
@@ -512,7 +512,7 @@ function normalizeVeo(req, model, sp) {
   if (req.audio !== undefined || req.audios !== undefined || metadata.audio !== undefined || metadata.audios !== undefined) {
     throw new Error(sp.label + " 不支持独立音频输入。");
   }
-  if (metadata.output_gcs_uri !== undefined) throw new Error("输出位置由插件管理，请移除 metadata.output_gcs_uri。");
+  if (metadata.output_gcs_uri !== undefined) throw new Error("输出位置由平台管理，请移除 metadata.output_gcs_uri。");
   const inputSeconds = optionalDecimal([
     req.input_duration, req.inputDuration, req.source_duration, req.sourceDuration,
     metadata.input_duration, metadata.inputDuration, metadata.video_duration, metadata.videoDuration,
