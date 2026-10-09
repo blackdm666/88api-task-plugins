@@ -187,8 +187,8 @@ test("resolves relative result URLs without relying on unavailable URL global", 
   assert.equal(result.url, "https://sub.example.invalid/videos/task_fixture.mp4")
 })
 
-test("1.2.1 publishes no model-square price examples", () => {
-  assert.equal(plugin.meta.version, "1.2.1")
+test("publishes no model-square price examples since 1.2.1", () => {
+  assert.equal(plugin.meta.version, "1.2.2")
   assert.equal("usageExamples" in plugin.meta, false)
   assert.equal(plugin.meta.usageProfiles.length, 2)
   for (const profile of plugin.meta.usageProfiles) assert.equal("examples" in profile, false)
@@ -262,6 +262,72 @@ test("requests without ratio are identical to deployed 1.1.2", async () => {
     assert.throws(() => old.protocols.openai_video.decodeRequest(ctx))
     assert.throws(() => plugin.protocols.openai_video.decodeRequest(ctx))
   }
+})
+
+const signedSource = "https://vidgen.x.ai/xai-vidgen-bucket/xai-video-fixture.mp4"
+
+function completed(video) {
+  return plugin.parseTaskResult(
+    { baseUrl: "http://sub2api:8080" },
+    { status: "done", video },
+    { status: 200 },
+  )
+}
+
+test("reports the signed xAI source URL as the result for the one-time copy", () => {
+  for (const source of [
+    signedSource,
+    "HTTPS://VIDGEN.X.AI:443/xai-vidgen-bucket/xai-video-fixture.mp4",
+    signedSource + "?expires=fixture",
+  ]) {
+    assert.deepEqual(
+      completed({ url: "/v1/videos/upstream/content", source_url: source }),
+      { status: "SUCCESS", progress: "100%", url: source },
+    )
+  }
+  assert.equal(
+    plugin.parseTaskResult(
+      { baseUrl: "http://sub2api:8080" },
+      { data: { status: "done", video: { url: "/v1/videos/upstream/content", source_url: signedSource } } },
+      { status: 200 },
+    ).url,
+    signedSource,
+  )
+})
+
+test("falls back to the Sub2API content URL when source_url is absent or not a vidgen URL", () => {
+  for (const source of [
+    undefined,
+    "",
+    "http://vidgen.x.ai/xai-video-fixture.mp4",
+    "https://vidgen.x.ai:8443/xai-video-fixture.mp4",
+    "https://vidgen.x.ai/",
+    "https://vidgen.x.ai",
+    "https://vidgen.x.ai.evil.invalid/xai-video-fixture.mp4",
+    "https://evil.invalid/vidgen.x.ai/xai-video-fixture.mp4",
+    "https://user@vidgen.x.ai/xai-video-fixture.mp4",
+    "https://vidgen.x.ai@evil.invalid/xai-video-fixture.mp4",
+    "https://vidgen.x.ai\\@evil.invalid/xai-video-fixture.mp4",
+    "https://vidgen.x.ai/xai-video-fixture.mp4\r\nX-Test: injected",
+    "//vidgen.x.ai/xai-video-fixture.mp4",
+    "/v1/videos/upstream/content",
+    { url: signedSource },
+  ]) {
+    assert.equal(
+      completed({ url: "/v1/videos/upstream/content", source_url: source }).url,
+      "http://sub2api:8080/v1/videos/upstream/content",
+      String(source),
+    )
+  }
+})
+
+test("keeps authenticated Sub2API content when the snapshot also carries source_url", () => {
+  const request = content("/v1/videos/upstream/content", {
+    data: { status: "done", video: { url: "/v1/videos/upstream/content", source_url: signedSource } },
+  })
+  assert.equal(request.url, "http://sub2api:8080/v1/videos/upstream/content")
+  assert.equal(request.credentialless, false)
+  assert.deepEqual(request.headers, { Authorization: "Bearer fixture-secret" })
 })
 
 test("rejects unsupported resolution, duration, and multiple images", () => {

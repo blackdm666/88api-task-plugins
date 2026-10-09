@@ -168,3 +168,41 @@ func TestIndependentPluginCatalogueGrokVideoNoPriceExamples(t *testing.T) {
 		assert.Contains(t, schema, "seconds", name)
 	}
 }
+
+// The signed xAI URL is reported as the task result so the host can hand it to
+// the transfer Worker, while customer content still goes through Sub2API.
+func TestIndependentPluginCatalogueGrokVideoSignedSourceResult(t *testing.T) {
+	task := setupGenericTaskTest(t)
+	source, err := os.ReadFile("../../plugins/grok-video/plugin.js")
+	require.NoError(t, err)
+	plugin, err := pluginruntime.NewRegistry().Register(string(source), pluginruntime.Options{})
+	require.NoError(t, err)
+	adaptor := taskjsplugin.New(plugin)
+	adaptor.Init(&relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{
+		ChannelType: constant.ChannelTypeTaskPlugin, ChannelBaseUrl: "http://sub2api:8080", ApiKey: "fixture-secret",
+	}})
+	const signed = "https://vidgen.x.ai/xai-vidgen-bucket/xai-video-fixture.mp4"
+	const proxied = "http://sub2api:8080/v1/videos/upstream/content"
+	for _, tc := range []struct{ source, want string }{
+		{signed, signed},
+		{"https://vidgen.x.ai.evil.invalid/xai-video-fixture.mp4", proxied},
+		{"https://user@vidgen.x.ai/xai-video-fixture.mp4", proxied},
+		{"", proxied},
+	} {
+		payload, err := common.Marshal(map[string]any{"status": "done", "video": map[string]any{
+			"url": "/v1/videos/upstream/content", "source_url": tc.source,
+		}})
+		require.NoError(t, err)
+		result, err := adaptor.ParseTaskResult(task, &http.Response{StatusCode: http.StatusOK, Header: http.Header{}}, payload)
+		require.NoError(t, err)
+		assert.Equal(t, "SUCCESS", result.Status, tc.source)
+		assert.Equal(t, tc.want, result.Url, tc.source)
+
+		task.Data = payload
+		descriptor, err := adaptor.BuildContentRequest(task, "video", relaychannel.TaskArtifactClientRequest{Method: http.MethodGet})
+		require.NoError(t, err)
+		assert.Equal(t, proxied, descriptor.URL)
+		assert.False(t, descriptor.Credentialless)
+		assert.Equal(t, "Bearer fixture-secret", descriptor.Headers["Authorization"])
+	}
+}

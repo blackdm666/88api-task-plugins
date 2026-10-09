@@ -290,6 +290,13 @@ not alter request handling or task billing.
 
 ## Grok Video
 
+`grok-video@1.2.2` reports Sub2API's `video.source_url` as the task result when
+it is an `https://vidgen.x.ai/...` URL, so NewAPI hands the anonymous xAI file
+to the transfer Worker instead of downloading it through Sub2API. Sub2API
+returns that field only with its `grok_video_source_url_enabled` switch on
+(v2.10.4+); otherwise, or for any other host, the result stays the Sub2API
+content URL as in 1.2.1. Content requests keep the authenticated `video.url`.
+
 `grok-video@1.2.1` drops its `usageExamples`, so the model-square detail page
 no longer shows a "价格示例" table and the card loses its `8s · 480p ≈` line.
 The per-resolution schemas, request handling and billing are unchanged.
