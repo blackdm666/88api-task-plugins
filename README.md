@@ -9,6 +9,7 @@
 | Seedream Pro | `seedream-pro` | `1.1.8` |
 | Minimax-H3 | `minimax-h3` | `2.0.0` |
 | Minimax-H3 Async | `minimax-h3-async` | `1.0.0` |
+| H3-Video | `h3-video` | `1.0.0` |
 | SD-Video | `sdgo-video` | `1.0.3` |
 | XM-Video | `xm-video` | `3.0.0` |
 | Vertex Omni (isolated QA) | `vertex-omni` | `1.0.0` |
@@ -271,6 +272,37 @@ plugin or require a NewAPI image rebuild.
 不从进度或未文档化字段猜测用量。模型列表手动维护，不代表上游实时发现。
 鉴权密钥只使用渠道配置，不写入插件。`Idempotency-Key` 仅作提示，
 上游没有承诺幂等，超时后不得盲目重新生成。
+
+## H3-Video
+
+`h3-video` 从 Minimax-H3 插件独立派生，对接 MiniMax H3 统一视频接口
+（`POST /v1/videos`、`GET /v1/videos/{id}`），不替换原 `minimax-h3`
+及其历史任务。渠道 Base URL 填站点根地址；带 `/v1` 或 `/draw/api/v1`
+后缀也会被归一化。上游模型默认 `minimax_h3`，渠道也可映射到
+`minimax_h3-03` 等已公布变体。
+
+- 分辨率由销售型号决定：模型名以 `480p`、`768p`、`1080p`、`2k`、`4k`
+  结尾（例如 `H3-Video-1080P`），也可由映射目标的同类后缀决定；不带后缀
+  的型号固定 768p。请求中的 `resolution`、`size`、`output.ratio` 只能确认
+  该档位，不能借参数切换到其他价位。每个销售型号单独配置秒价。
+- 时长 4–15 秒整数，默认 5 秒；`duration`、`seconds` 与 metadata 中的
+  时长必须一致。上游查询不返回计费秒数，按校验后的请求秒数结算。
+- 画幅 16:9、9:16、1:1、2:3、3:2、3:4、4:3、21:9，默认 16:9；
+  不支持 `adaptive`。`size` 可写宽x高，按比例换算。
+- 工作流自动选择：无素材 `text-to-video`，首尾帧 `fl2v`，参考素材
+  `multi-reference`；2K/4K 改用 `cf-fl2v` / `cf-multi-reference`（纯文本
+  2K/4K 也走 `cf-multi-reference`，已实测可出片）。显式 `workflow_id`
+  只能与自动结果一致。
+- 素材沿用 Minimax-H3 的字段：`images` 为首/尾帧，`metadata.reference_*`
+  为参考图片/视频/音频，也接受 `metadata.content`、`media` 和上游格式
+  `references`。参考图片≤9、视频≤3、音频≤3、合计≤12；首尾帧不能与
+  参考素材混用，尾帧必须有首帧。multipart 上传的文件以 data URL 内联
+  （图片/视频/音频分别限 30/50/15 MB）。
+- 上游以 `Idempotency-Key` 去重，插件传入网关任务号，宿主重试不会重复生成。
+- 上游刚报告完成时只给出需要鉴权的站内下载地址，稍后才出现可匿名访问的
+  对象存储签名直链（约 12 小时有效，成品保留 1 天）。插件在直链出现前保持
+  99% 进行中继续轮询，最多 60 轮后判失败；内容只通过直链免凭证获取，
+  不把渠道密钥发往对象存储。
 
 ## SD-Video
 
