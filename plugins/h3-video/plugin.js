@@ -311,15 +311,23 @@ function directVideoURL(body) {
   return "";
 }
 
+// Failure reasons are shown to end users: drop links and host names that would identify the upstream.
+function publicReason(message) {
+  return trimmed(String(message || "")
+    .replace(/[a-z][a-z0-9+.-]*:\/\/\S+/gi, "")
+    .replace(/\b(?:[a-z0-9-]+\.)+(?:com|net|org|best|cn|io|ai|cc|top|xyz|dev|app|co|me|info|site|online|tech|cloud)\b\S*/gi, "")
+    .replace(/\s{2,}/g, " "));
+}
+
 function failureReason(body) {
-  return apiErrorMessage(body) || trimmed(body.status_message) || "视频生成失败，服务端未提供具体原因，请联系管理员。";
+  return publicReason(apiErrorMessage(body) || trimmed(body.status_message)) || "视频生成失败，服务端未提供具体原因，请联系管理员。";
 }
 
 export function parseSubmitResponse(_ctx, response) {
   const body = object(response.body);
   const taskId = trimmed(body.id) || trimmed(body.task_id);
   if (!taskId) {
-    throw new Error(apiErrorMessage(body) || "视频服务未返回任务编号，请联系管理员确认是否已受理，勿重复提交。");
+    throw new Error(publicReason(apiErrorMessage(body)) || "视频服务未返回任务编号，请联系管理员确认是否已受理，勿重复提交。");
   }
   const result = { taskId: taskId, taskData: body };
   if (body.status === "failed") result.immediate = { status: "FAILURE", progress: "100%", reason: failureReason(body) };
@@ -344,7 +352,7 @@ function stageProgress(value) {
 export function parseTaskResult(ctx, data) {
   const body = taskBody(data);
   if (!body.status) {
-    return { status: "UNKNOWN", reason: apiErrorMessage(body) || "暂未获取到视频任务信息，请稍后查询，无需重新提交生成。" };
+    return { status: "UNKNOWN", reason: publicReason(apiErrorMessage(body)) || "暂未获取到视频任务信息，请稍后查询，无需重新提交生成。" };
   }
   const id = trimmed(body.id) || trimmed(body.task_id);
   if (trimmed(ctx && ctx.taskId) && id && id !== ctx.taskId) throw new Error("上游返回的任务编号不匹配。");
