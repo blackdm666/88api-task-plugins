@@ -46,12 +46,16 @@ func TestIndependentPluginCatalogueVertexOmniHTTP(t *testing.T) {
 		require.True(t, ok)
 		assert.Same(t, factory, endpoint.Plugin)
 	}
-	for _, name := range []string{"veo-3.1", "gemini-omni-flash", "gemini-omni-flash-1.1", "gemini-omni-1.1-flash-preview"} {
+	for _, name := range []string{"veo-3.1", "veo-3.1-fast", "gemini-omni-flash", "gemini-omni-flash-1.1", "gemini-omni-1.1-flash-preview",
+		"gemini-omni-flash-preview", "veo-3.1-generate-001", "veo-3.1-fast-generate-001"} {
 		_, ok = generation.LookupEndpoint("POST", "/v1/videos", name)
 		assert.False(t, ok)
 	}
-	_, ok = generation.LookupEndpoint("POST", "/v1/videos", "vertex-omni-1.1-test")
-	require.True(t, ok)
+	for _, name := range []string{"vertex-omni-1.1-test", "vertex-omni-flash-test", "vertex-veo-3.1-test", "vertex-veo-3.1-fast-test"} {
+		endpoint, ok := generation.LookupEndpoint("POST", "/v1/videos", name)
+		require.True(t, ok, name)
+		assert.Same(t, plugin, endpoint.Plugin, name)
+	}
 
 	originalAuth := acquireAccessToken
 	pluginAuthCache = sync.Map{}
@@ -213,12 +217,16 @@ func TestIndependentPluginCatalogueVertexOmniCapabilitiesAndExtensionUsage(t *te
 			"aspect_ratio": "9:16", "temperature": 0, "top_p": 1})
 		wire := call("buildSubmitRequest", c).(map[string]any)["body"].(map[string]any)
 		format := wire["response_format"].([]any)[0].(map[string]any)
-		assert.Equal(t, resolution, format["resolution"])
+		expected := resolution
+		if resolution == "360p" {
+			expected = "720p" // 360p is not sold: generated and billed as 720p
+		}
+		assert.Equal(t, expected, format["resolution"])
 		assert.Equal(t, "10s", format["duration"])
 		generation := wire["generation_config"].(map[string]any)
 		assert.EqualValues(t, 0, generation["temperature"])
 		assert.EqualValues(t, 1, generation["top_p"])
-		assert.Equal(t, resolution, call("extractUsage", c).(map[string]any)["resolution"])
+		assert.Equal(t, expected, call("extractUsage", c).(map[string]any)["resolution"])
 	}
 	atom := func(kind string, body []byte) []byte {
 		header := make([]byte, 8)
@@ -319,4 +327,100 @@ func mustMarshalOmniTest(t *testing.T, value any) []byte {
 	data, err := common.Marshal(value)
 	require.NoError(t, err)
 	return data
+}
+
+// Veo runs through the same shipped plugin in Sobek: regional
+// predictLongRunning with storageUri, fetchPredictOperation polling and a
+// gcsUri result. Local provider and stub OAuth only.
+func TestIndependentPluginCatalogueVertexVeoHTTP(t *testing.T) {
+	source, err := os.ReadFile("../../../../../plugins/vertex-omni/plugin.js")
+	require.NoError(t, err)
+	plugin, err := pluginruntime.NewRegistry().Register(string(source), pluginruntime.Options{})
+	require.NoError(t, err)
+	originalAuth := acquireAccessToken
+	pluginAuthCache = sync.Map{}
+	acquireAccessToken = func(vertexcore.Credentials, string) (string, error) { return "fixture-oauth", nil }
+	t.Cleanup(func() { acquireAccessToken = originalAuth; pluginAuthCache = sync.Map{} })
+	key, err := common.Marshal(vertexcore.Credentials{ProjectID: "fixture-project", PrivateKey: "fixture-not-a-key"})
+	require.NoError(t, err)
+	operation := "projects/fixture-project/locations/us-central1/publishers/google/models/veo-3.1-fast-generate-001/operations/0b6c5f3a-1111-4222-8333-944455556666"
+	stored := "gs://88api-omni-media/vertex-omni/task_publicveofixture/1208296686290258483/sample_0.mp4"
+	polls, submits := 0, 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "Bearer fixture-oauth", r.Header.Get("Authorization"))
+		assert.Equal(t, http.MethodPost, r.Method)
+		w.Header().Set("Content-Type", "application/json")
+		var body map[string]any
+		require.NoError(t, common.DecodeJson(r.Body, &body))
+		prefix := "/v1/projects/fixture-project/locations/us-central1/publishers/google/models/veo-3.1-fast-generate-001:"
+		switch r.URL.Path {
+		case prefix + "predictLongRunning":
+			submits++
+			parameters := body["parameters"].(map[string]any)
+			assert.Equal(t, "gs://88api-omni-media/vertex-omni/task_publicveofixture/", parameters["storageUri"])
+			assert.EqualValues(t, 6, parameters["durationSeconds"])
+			assert.Equal(t, "4k", parameters["resolution"])
+			assert.Equal(t, false, parameters["generateAudio"])
+			_, err = io.WriteString(w, `{"name":"`+operation+`"}`)
+			require.NoError(t, err)
+		case prefix + "fetchPredictOperation":
+			polls++
+			assert.Equal(t, operation, body["operationName"])
+			reply := `{"name":"` + operation + `"}`
+			if polls > 1 {
+				reply = `{"name":"` + operation + `","done":true,"response":{"raiMediaFilteredCount":0,"videos":[{"gcsUri":"` + stored + `","mimeType":"video/mp4"}]}}`
+			}
+			_, err = io.WriteString(w, reply)
+			require.NoError(t, err)
+		default:
+			t.Errorf("unexpected path %s", r.URL.Path)
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "vertex-veo-3.1-fast-test",
+		ChannelMeta: &relaycommon.ChannelMeta{ChannelType: constant.ChannelTypeTaskPlugin,
+			ChannelBaseUrl: server.URL, ApiKey: string(key), UpstreamModelName: "veo-3.1-fast-generate-001"},
+		TaskRelayInfo: &relaycommon.TaskRelayInfo{PublicTaskID: "task_publicveofixture"},
+	}
+	adaptor := New(plugin)
+	adaptor.Init(info)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(`{}`))
+	c.Set("task_request", map[string]any{"prompt": "Fixture", "duration": 6, "size": "3840x2160", "generate_audio": false})
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
+	facts, err := adaptor.ExtractUsageFactsValidated(c, info)
+	require.NoError(t, err)
+	assert.EqualValues(t, 6, facts["seconds"])
+	assert.Equal(t, "4k", facts["resolution"])
+	assert.Equal(t, false, facts["generate_audio"])
+	body, err := adaptor.BuildRequestBody(c, info)
+	require.NoError(t, err)
+	resp, err := adaptor.DoRequest(c, info, body)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	accepted, taskErr := adaptor.ParseResponse(c, resp, info)
+	require.Nil(t, taskErr)
+	require.NotNil(t, accepted)
+	assert.NotContains(t, accepted.UpstreamTaskID, "/", "operation names are encoded into a safe task ID")
+	task := &model.Task{TaskID: "task_publicveofixture",
+		Properties:  model.Properties{OriginModelName: info.OriginModelName, UpstreamModelName: info.UpstreamModelName},
+		PrivateData: model.TaskPrivateData{UpstreamTaskID: accepted.UpstreamTaskID, PluginState: accepted.PluginState}}
+	for _, expected := range []string{"IN_PROGRESS", "SUCCESS"} {
+		query, err := adaptor.FetchTask(server.URL, string(key), task, "")
+		require.NoError(t, err)
+		payload, err := io.ReadAll(query.Body)
+		require.NoError(t, err)
+		require.NoError(t, query.Body.Close())
+		result, err := adaptor.ParseTaskResult(task, query, payload)
+		require.NoError(t, err)
+		assert.Equal(t, expected, result.Status)
+		if expected == "SUCCESS" {
+			assert.Equal(t, "https://storage.googleapis.com/storage/v1/b/88api-omni-media/o/"+
+				url.PathEscape("vertex-omni/task_publicveofixture/1208296686290258483/sample_0.mp4")+"?alt=media", result.Url)
+		}
+	}
+	assert.Equal(t, 1, submits, "polling must never start a new billable operation")
+	assert.Equal(t, 2, polls)
 }

@@ -3,6 +3,9 @@ import test from "node:test";
 import * as plugin from "../plugins/vertex-omni/plugin.js";
 
 const model = "vertex-omni-1.1-test";
+const flashModel = "vertex-omni-flash-test";
+const veoModel = "vertex-veo-3.1-test";
+const veoFastModel = "vertex-veo-3.1-fast-test";
 const upstream = "gemini-omni-1.1-flash-preview";
 const bucket = "88api-omni-media";
 const outputPrefix = "gs://" + bucket + "/vertex-omni/task_fixture01/";
@@ -10,15 +13,15 @@ const delivery = { delivery: "uri", gcs_uri: outputPrefix };
 const stored = outputPrefix + "123.mp4";
 const clip = "https://cdn.example.com/clip.mp4";
 const still = "https://cdn.example.com/still.png";
-function decode(value = {}) {
+function decode(value = {}, name = model) {
   return plugin.protocols.openai_video.decodeRequest({
-    model, body: { kind: "json", value: { prompt: "Fixture", ...value } },
+    model: name, body: { kind: "json", value: { prompt: "Fixture", ...value } },
   });
 }
-function driver(value = {}) {
-  return { model, upstreamModel: upstream, baseUrl: "https://aiplatform.googleapis.com",
+function driver(value = {}, name = model, upstreamName = upstream) {
+  return { model: name, upstreamModel: upstreamName, baseUrl: "https://aiplatform.googleapis.com",
     authHeader: "Bearer fixture-token", auth: { projectId: "fixture-project" }, publicTaskId: "task_fixture01",
-    requestBody: decode(value).requestBody };
+    requestBody: decode(value, name).requestBody };
 }
 // Simulate the Worker's preflight answer for exactly what the plugin asked.
 function ingested(ctx, facts = { seconds: 10, resolution: "720p" }, edit = items => items) {
@@ -27,7 +30,7 @@ function ingested(ctx, facts = { seconds: 10, resolution: "720p" }, edit = items
   const items = preflight.body.items.map((item, index) => ({
     url: item.url, kind: item.kind, size: 1234,
     uri: "gs://" + bucket + "/vertex-omni-inputs/2026-10-09/" + index + (item.kind === "video" ? ".mp4" : ".png"),
-    mime_type: item.kind === "video" ? "video/mp4" : "image/png",
+    mime_type: item.kind === "video" ? "video/mp4" : item.url.endsWith(".jpg") ? "image/jpeg" : "image/png",
     ...(item.kind === "video" && preflight.body.measure && facts !== null ? { facts } : {}),
   }));
   return { ...ctx, preflightResponse: { status: 200, body: { object: "gcs_ingest", items: edit(items) } } };
@@ -68,14 +71,15 @@ function mp4(seconds, resolution = "720p", version = 0, movieSeconds = seconds) 
 
 test("QA manifest does not intercept production Vertex, Veo or Omni models", () => {
   assert.equal(plugin.meta.key, "vertex-omni");
-  assert.equal(plugin.meta.version, "1.3.0");
+  assert.equal(plugin.meta.version, "1.4.0");
   assert.deepEqual(plugin.meta.requiredCapabilities, ["task-preflight@1"], "no SSE host capability");
-  assert.deepEqual(plugin.meta.allowedHosts, ["storage.googleapis.com", "assets.88api.ai"]);
-  assert.deepEqual(plugin.meta.models, [model]);
+  assert.deepEqual(plugin.meta.allowedHosts, ["storage.googleapis.com", "us-central1-aiplatform.googleapis.com", "assets.88api.ai"]);
+  assert.deepEqual(plugin.meta.models, [model, flashModel, veoModel, veoFastModel]);
   assert.equal(plugin.meta.channelTypes, undefined);
   assert.equal(plugin.meta.dynamicModels, undefined);
   assert.deepEqual(plugin.meta.auth, { type: "oauth2_jwt" });
-  for (const name of ["gemini-omni-flash", "gemini-omni-flash-1.1", upstream, "veo-3.1"]) {
+  for (const name of ["gemini-omni-flash", "gemini-omni-flash-1.1", upstream, "veo-3.1", "veo-3.1-fast",
+    "gemini-omni-flash-preview", "veo-3.1-generate-001", "veo-3.1-fast-generate-001", "veo-3.1-lite-generate-001"]) {
     assert.throws(() => plugin.protocols.openai_video.decodeRequest({
       model: name, body: { kind: "json", value: { prompt: "Fixture" } },
     }), /独立测试模型/);
@@ -179,7 +183,7 @@ test("inconsistent or failed ingest answers stop the request before Google is ca
     ["count", ingested(ctx, undefined, items => items.slice(1)), /数量/],
     ["order", ingested(ctx, undefined, items => items.reverse()), /不一致/],
     ["kind", ingested(ctx, undefined, items => items.map(item => ({ ...item, kind: "video" }))), /不一致/],
-    ["mime", ingested(ctx, undefined, items => items.map(item => ({ ...item, mime_type: "image/svg+xml" }))), /不一致/],
+    ["mime", ingested(ctx, undefined, items => items.map(item => ({ ...item, mime_type: "image/svg+xml" }))), /不受支持/],
     ["foreign bucket", ingested(ctx, undefined, items => items.map(item => ({ ...item, uri: "gs://elsewhere/a.png" }))), /不一致/],
     ["not gcs", ingested(ctx, undefined, items => items.map(item => ({ ...item, uri: still }))), /gs:\/\//],
   ]) assert.throws(() => plugin.buildSubmitRequest(broken), message, label);
@@ -222,7 +226,7 @@ test("official Omni modes, sampling, frame roles and extension wire are explicit
 test("extension requests and measured inputs are bounded to what Google accepts", () => {
   const base = { task: "extend", video: clip };
   for (const [value, message] of [
-    [{ ...base, resolution: "4k" }, /720p 或 1080p/], [{ ...base, resolution: "360p" }, /720p 或 1080p/],
+    [{ ...base, resolution: "4k" }, /720p 或 1080p/],
     [{ ...base, duration: 20 }, /固定新增/], [{ ...base, metadata: { durationSeconds: 40 } }, /固定新增/],
     [{ ...base, size: "1280x720" }, /沿用输入画面/], [{ ...base, aspect_ratio: "16:9" }, /沿用输入画面/],
     [{ ...base, video: undefined }, /1 个参考视频/], [{ ...base, input_duration: 31 }, /1 到 30/],
@@ -298,7 +302,7 @@ test("legacy extension snapshots bill the full playable movie when video and aud
     const data = completed({ type: "video", mime_type: "video/mp4", data: mp4(6, "360p", version, 9.024) });
     const result = plugin.parseTaskResult(query, data);
     assert.equal(result.status, "SUCCESS");
-    assert.deepEqual(plugin.extractUsageOnComplete(query, result, data), { seconds: 9.024, resolution: "360p" });
+    assert.deepEqual(plugin.extractUsageOnComplete(query, result, data), { seconds: 9.024, resolution: "720p" }, "360p is billed as 720p");
     assert.equal(result.state.output_seconds, 9.024);
   }
 });
@@ -308,7 +312,7 @@ test("40s results tolerate the verified audio tail but reject oversized movie or
   const valid = completed({ type: "video", mime_type: "video/mp4", data: mp4(40, "360p", 0, 40.363) });
   const result = plugin.parseTaskResult(query, valid);
   assert.equal(result.status, "SUCCESS");
-  assert.deepEqual(plugin.extractUsageOnComplete(query, result, valid), { seconds: 40.363, resolution: "360p" });
+  assert.deepEqual(plugin.extractUsageOnComplete(query, result, valid), { seconds: 40.363, resolution: "720p" });
   for (const data of [mp4(40, "360p", 0, 41.001), mp4(41, "360p", 0, 41)]) {
     assert.equal(plugin.parseTaskResult(query, completed({ type: "video", mime_type: "video/mp4", data })).status, "UNKNOWN");
   }
@@ -359,7 +363,7 @@ test("legacy continuation snapshots retain request billing while unmeasurable re
 
 test("all documented resolution and orientation sizes agree with wire and frozen usage", () => {
   for (const [size, resolution, ratio] of [
-    ["640x360", "360p", "16:9"], ["360x640", "360p", "9:16"],
+    ["640x360", "720p", "16:9"], ["360x640", "720p", "9:16"],
     ["1920x1080", "1080p", "16:9"], ["1080x1920", "1080p", "9:16"],
     ["3840x2160", "4k", "16:9"], ["2160x3840", "4k", "9:16"],
   ]) {
@@ -462,4 +466,157 @@ test("malformed connections never construct credential-bearing requests", () => 
   }
   assert.equal(plugin.buildSubmitRequest({ ...driver(), publicTaskId: undefined }).body.response_format[0].gcs_uri,
     "gs://" + bucket + "/vertex-omni/unassigned/");
+});
+
+// ---- 1.4.0: Omni Flash and Veo 3.1 / Fast (isolated test names) ----
+const veoRoot = "https://us-central1-aiplatform.googleapis.com/v1/projects/fixture-project/locations/us-central1/publishers/google/models/";
+const veoOp = name => "projects/fixture-project/locations/us-central1/publishers/google/models/" + name + "/operations/0b6c5f3a-1111-4222-8333-944455556666";
+
+test("Omni Flash shares the Interactions wire but only 720p, without extension, edit or continuation", () => {
+  const ctx = driver({ duration: 5 }, flashModel, "gemini-omni-flash-preview");
+  const request = plugin.buildSubmitRequest(ctx);
+  assert.equal(request.body.model, "gemini-omni-flash-preview");
+  assert.deepEqual(request.body.response_format, [{ type: "video", duration: "5s", aspect_ratio: "16:9", resolution: "720p", ...delivery }]);
+  assert.deepEqual(plugin.extractUsage(ctx), { seconds: 5, resolution: "720p" });
+  const frames = plugin.buildSubmitRequest(ingested(driver({ first_frame: still, last_frame: clip.replace(".mp4", ".png") },
+    flashModel, flashModel)));
+  assert.equal(frames.body.generation_config.video_config.task, "image_to_video");
+  assert.equal(plugin.buildSubmitRequest(ingested(driver({ images: [still, still] }, flashModel, flashModel)))
+    .body.generation_config.video_config.task, "reference_to_video");
+  for (const [value, message] of [[{ resolution: "1080p" }, /仅支持 720p/], [{ size: "3840x2160" }, /仅支持 720p/],
+    [{ task: "extend", video: clip }, /不支持 extend/], [{ video: clip }, /不支持 edit/],
+    [{ previous_interaction_id: "v1_previous" }, /不支持多轮/]]) assert.throws(() => decode(value, flashModel), message);
+  assert.throws(() => plugin.buildSubmitRequest(driver({}, flashModel, upstream)), /精确上游型号/, "cannot map Flash onto Omni 1.1");
+});
+
+test("Veo text-to-video uses regional predictLongRunning with storageUri and audio-aware usage", () => {
+  for (const [name, upstreamName] of [[veoModel, "veo-3.1-generate-001"], [veoFastModel, "veo-3.1-fast-generate-001"]]) {
+    const ctx = driver({ duration: 4, size: "2160x3840", generate_audio: false, seed: 7, negative_prompt: "blur" }, name, upstreamName);
+    assert.equal(plugin.buildPreflightRequest(ctx), null);
+    const request = plugin.buildSubmitRequest(ctx);
+    assert.equal(request.url, veoRoot + upstreamName + ":predictLongRunning");
+    assert.equal(request.headers.Authorization, "Bearer fixture-token");
+    assert.deepEqual(request.body, { instances: [{ prompt: "Fixture" }], parameters: {
+      sampleCount: 1, generateAudio: false, storageUri: outputPrefix, durationSeconds: 4, aspectRatio: "9:16",
+      resolution: "4k", negativePrompt: "blur", seed: 7 } });
+    assert.equal(request.action, "text_to_video");
+    assert.deepEqual(plugin.extractUsage(ctx), { seconds: 4, resolution: "4k", generate_audio: false });
+  }
+  const defaults = driver({}, veoModel, veoModel);
+  assert.deepEqual(plugin.buildSubmitRequest(defaults).body.parameters, { sampleCount: 1, generateAudio: true,
+    storageUri: outputPrefix, durationSeconds: 8, aspectRatio: "16:9", resolution: "720p" });
+  assert.deepEqual(plugin.extractUsage(defaults), { seconds: 8, resolution: "720p", generate_audio: true });
+  assert.equal(plugin.buildSubmitRequest({ ...defaults, baseUrl: "http://127.0.0.1:9999" }).url,
+    "http://127.0.0.1:9999/v1/projects/fixture-project/locations/us-central1/publishers/google/models/veo-3.1-generate-001:predictLongRunning");
+  assert.throws(() => plugin.buildSubmitRequest(driver({}, veoModel, "veo-3.1-fast-generate-001")), /精确上游型号/);
+});
+
+test("Veo first/last frame, references and extension map onto Veo instance fields", () => {
+  const frames = plugin.buildSubmitRequest(ingested(driver({ first_frame: "https://cdn.example.com/a.jpg",
+    last_frame: still, duration: 6 }, veoFastModel, veoFastModel)));
+  assert.deepEqual(frames.body.instances, [{ prompt: "Fixture",
+    image: { gcsUri: "gs://" + bucket + "/vertex-omni-inputs/2026-10-09/0.png", mimeType: "image/jpeg" },
+    lastFrame: { gcsUri: "gs://" + bucket + "/vertex-omni-inputs/2026-10-09/1.png", mimeType: "image/png" } }]);
+  assert.equal(frames.action, "image_to_video");
+  const single = plugin.buildSubmitRequest(ingested(driver({ input_reference: still }, veoModel, veoModel)));
+  assert.equal(single.action, "image_to_video", "one image without a task is the first frame");
+  assert.ok(single.body.instances[0].image && !single.body.instances[0].referenceImages);
+  const references = plugin.buildSubmitRequest(ingested(driver({ images: [still, still, still] }, veoModel, veoModel)));
+  assert.equal(references.action, "reference_to_video");
+  assert.equal(references.body.instances[0].referenceImages.length, 3);
+  assert.deepEqual(references.body.instances[0].referenceImages[0].referenceType, "asset");
+  assert.equal(references.body.parameters.durationSeconds, 8);
+  const extend = driver({ task: "extend", video: clip }, veoFastModel, veoFastModel);
+  assert.equal(plugin.buildPreflightRequest(extend).body.measure, true);
+  const extension = plugin.buildSubmitRequest(ingested(extend, { seconds: 4, resolution: "720p" }));
+  assert.deepEqual(extension.body.instances[0].video, { gcsUri: "gs://" + bucket + "/vertex-omni-inputs/2026-10-09/0.mp4", mimeType: "video/mp4" });
+  assert.deepEqual(extension.body.parameters, { sampleCount: 1, generateAudio: true, storageUri: outputPrefix });
+  assert.deepEqual(plugin.extractUsage(extend), { seconds: 8, resolution: "720p", generate_audio: true });
+});
+
+test("Veo requests are bounded to what Google accepts", () => {
+  for (const [value, message] of [
+    [{ duration: 5 }, /4、6 或 8/], [{ duration: 10 }, /4、6 或 8/], [{ resolution: "360p" }, /720p、1080p 或 4k/],
+    [{ images: [still, still], duration: 4 }, /只支持 8 秒/], [{ images: [still, still, still, still] }, /1 到 3/],
+    [{ task: "extend", video: clip, duration: 8 }, /固定新增 7 秒/], [{ task: "extend", video: clip, resolution: "1080p" }, /延长沿用/],
+    [{ task: "extend", video: clip, size: "1280x720" }, /延长沿用/], [{ task: "edit", video: clip }, /只支持/],
+    [{ task: "text_to_video", image: still }, /不能同时/], [{ generate_audio: "false" }, /true 或 false/],
+    [{ seed: -1 }, /seed/], [{ temperature: 0.5 }, /不支持 temperature/], [{ previous_interaction_id: "v1_x" }, /不支持 previous/],
+    [{ audio: "https://cdn.example.com/a.mp3" }, /音频/], [{ parameters: {} }, /由插件管理/], [{ n: 2 }, /单个视频/],
+    [{ video: "data:video/mp4;base64,AAAA", task: "extend" }, /HTTP\(S\) URL/],
+  ]) assert.throws(() => decode(value, veoModel), message, JSON.stringify(value));
+  assert.throws(() => plugin.buildSubmitRequest(ingested(driver({ image: "https://cdn.example.com/a.webp" }, veoModel, veoModel),
+    undefined, items => items.map(item => ({ ...item, mime_type: "image/webp" })))), /image\/jpeg、image\/png/);
+  for (const [facts, message] of [[null, /可测量时长/], [{ seconds: 31 }, /截取末尾/]]) {
+    assert.throws(() => plugin.buildSubmitRequest(ingested(driver({ task: "extend", video: clip }, veoModel, veoModel), facts)), message);
+  }
+});
+
+test("Veo operations encode into safe task IDs, poll fetchPredictOperation and deliver gcsUri results", () => {
+  const ctx = driver({ duration: 6, resolution: "1080p", generate_audio: false }, veoFastModel, "veo-3.1-fast-generate-001");
+  const submitted = plugin.parseSubmitResponse(ctx, { body: { name: veoOp("veo-3.1-fast-generate-001") } });
+  assert.match(submitted.taskId, /^[A-Za-z0-9_-]+$/);
+  assert.deepEqual(submitted.taskData, { name: veoOp("veo-3.1-fast-generate-001") });
+  assert.deepEqual(submitted.state, { family: "veo", seconds: 6, resolution: "1080p", aspect_ratio: "16:9", generate_audio: false });
+  assert.throws(() => plugin.parseSubmitResponse(ctx, { body: { name: veoOp("veo-3.1-generate-001") } }), /非预期型号/);
+  assert.throws(() => plugin.parseSubmitResponse(ctx, { body: { name: "operations/../x" } }), /格式不正确/);
+  assert.throws(() => plugin.parseSubmitResponse(ctx, { body: { error: { code: 400, message: "Invalid resolution: 999p" } } }), /999p/);
+  const query = { ...driver({}, veoFastModel, "veo-3.1-fast-generate-001"), taskId: submitted.taskId, state: submitted.state, requestBody: undefined };
+  const request = plugin.buildQueryRequest(query);
+  assert.equal(request.url, veoRoot + "veo-3.1-fast-generate-001:fetchPredictOperation");
+  assert.equal(request.method, "POST");
+  assert.deepEqual(request.body, { operationName: veoOp("veo-3.1-fast-generate-001") });
+  assert.throws(() => plugin.buildQueryRequest({ ...query, taskId: "bm90LWFuLW9w" }), /格式不正确/);
+  assert.deepEqual(plugin.parseTaskResult(query, { name: veoOp("veo-3.1-fast-generate-001") }), { status: "IN_PROGRESS", progress: "50%" });
+  assert.equal(plugin.parseTaskResult(query, {}).status, "UNKNOWN");
+  const failed = plugin.parseTaskResult(query, { name: "x", done: true, error: { code: 3, message: "Unsupported output video duration 5 seconds" } });
+  assert.equal(failed.status, "FAILURE");
+  assert.match(failed.reason, /Unsupported output video duration/);
+  const filtered = plugin.parseTaskResult(query, { done: true, response: { raiMediaFilteredCount: 1, raiMediaFilteredReasons: ["Prompt blocked"] } });
+  assert.deepEqual([filtered.status, filtered.reason], ["FAILURE", "Prompt blocked"]);
+  const uri = outputPrefix + "1208296686290258483/sample_0.mp4";
+  const done = { name: veoOp("veo-3.1-fast-generate-001"), done: true, response: { raiMediaFilteredCount: 0,
+    videos: [{ gcsUri: uri, mimeType: "video/mp4" }] } };
+  const result = plugin.parseTaskResult(query, done);
+  assert.equal(result.status, "SUCCESS");
+  assert.equal(result.url, "https://storage.googleapis.com/storage/v1/b/" + bucket + "/o/" +
+    encodeURIComponent("vertex-omni/task_fixture01/1208296686290258483/sample_0.mp4") + "?alt=media");
+  assert.equal(plugin.extractUsageOnComplete(query, result, done), null, "ordinary Veo bills the requested seconds");
+  assert.deepEqual(plugin.listArtifacts({ status: "SUCCESS", data: done }), [{ key: "video", type: "video", mimeType: "video/mp4" }]);
+  const content = plugin.buildContentRequest({ ...driver({}, veoFastModel, veoFastModel), artifactKey: "video", data: done, clientRequest: { method: "GET" } });
+  assert.equal(content.headers.Authorization, "Bearer fixture-token");
+  const inline = plugin.parseTaskResult(query, { done: true, response: { videos: [{ bytesBase64Encoded: "dmlkZW8=", mimeType: "video/mp4" }] } });
+  assert.equal(inline.url, "data:video/mp4;base64,dmlkZW8=");
+  assert.equal(plugin.parseTaskResult(query, { done: true, response: { videos: [{ gcsUri: "https://evil.invalid/v.mp4" }] } }).status, "FAILURE");
+});
+
+test("Veo extensions settle measured added seconds with the requested audio flag", () => {
+  const ctx = ingested(driver({ task: "extend", video: clip, generate_audio: false }, veoModel, veoModel), { seconds: 4, resolution: "720p" });
+  const submitted = plugin.parseSubmitResponse(ctx, { body: { name: veoOp("veo-3.1-generate-001") } });
+  assert.deepEqual(submitted.state, { family: "veo", seconds: 8, resolution: "720p", aspect_ratio: "16:9", generate_audio: false,
+    input_seconds: 4, bill_added_seconds: true, task: "extend" });
+  const query = { ...driver({}, veoModel, veoModel), taskId: submitted.taskId, action: "extend", state: submitted.state, requestBody: undefined };
+  const uri = outputPrefix + "9183078913211969829/sample_0.mp4";
+  const waiting = plugin.parseTaskResult(query, { done: true, response: { videos: [{ gcsUri: uri, mimeType: "video/mp4" }] } });
+  assert.equal(waiting.status, "IN_PROGRESS");
+  assert.equal(waiting.state.probe_uri, uri);
+  const probing = { ...query, state: waiting.state };
+  assert.match(plugin.buildQueryRequest(probing).url, /^https:\/\/assets\.88api\.ai\/gcs\/probe\?id=/);
+  const body = { ...probe({ seconds: 11, resolution: "720p", width: 1280, height: 720 }, uri), id: submitted.taskId };
+  const result = plugin.parseTaskResult(probing, body);
+  assert.equal(result.status, "SUCCESS");
+  assert.deepEqual(plugin.extractUsageOnComplete(probing, result, body), { seconds: 7, resolution: "720p", generate_audio: false });
+});
+
+test("360p is not sold: Omni 1.1 upgrades it to 720p and the billing schema omits it", () => {
+  assert.deepEqual(plugin.meta.usageSchema.resolution.enum, ["720p", "1080p", "4k"]);
+  for (const value of [{ resolution: "360p" }, { size: "640x360" }, { metadata: { resolution: "360p" } }]) {
+    const ctx = driver(value);
+    assert.equal(plugin.buildSubmitRequest(ctx).body.response_format[0].resolution, "720p");
+    assert.equal(plugin.extractUsage(ctx).resolution, "720p");
+  }
+  assert.throws(() => decode({ resolution: "360p", size: "1280x720", aspect_ratio: undefined, metadata: { resolution: "1080p" } }), /冲突/);
+  assert.equal(plugin.buildSubmitRequest(driver({ resolution: "360p" }, flashModel, flashModel)).body.response_format[0].resolution, "720p");
+  assert.throws(() => decode({ resolution: "1080p" }, flashModel), /仅支持 720p/, "Flash rejects unsupported resolutions");
+  assert.throws(() => decode({ resolution: "360p" }, veoModel), /720p、1080p 或 4k/);
 });

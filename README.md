@@ -37,15 +37,57 @@ Minimax-H3 与 XM-Video 的初始独立版本与当时88API镜像和生产自定
 也可从官方版本历史激活。出厂版没有数据库存档时，不能直接调用版本
 激活接口。不通过停用整个 Alibaba 插件实现回滚。
 
-## Vertex Omni：独立隔离测试版
+## Vertex Video（key `vertex-omni`）：独立隔离测试版
 
-`vertex-omni@1.3.0` 是独立的 Vertex Interactions 视频插件，不覆盖
-`vertex-ai`，不声明渠道类型41，不注册Veo、旧Omni或正式1.1模型名，
-也不启用动态模型接管。当前只声明 `vertex-omni-1.1-test`；默认发送精确
-上游ID `gemini-omni-1.1-flash-preview`，也允许测试渠道显式映射到该ID。
-它只适用于单独绑定此插件的 Task Plugin 渠道，不支持 New API 中继渠道。
-1.3.0不再声明`query-sse-delta@1`，改为声明`task-preflight@1`，可安装在没有SSE查询
-能力的宿主上（已在锁定宿主`1debc5f3`及其父提交`800dc5a`上运行回归）。
+`vertex-omni@1.4.0` 是独立的 Vertex 视频插件，显示名为 Vertex Video。它不覆盖
+`vertex-ai`，不声明渠道类型 41，也不启用动态模型接管。
+插件 key 保持 `vertex-omni` 不变，以免已有渠道绑定和历史任务失联。
+
+插件只声明下表中的隔离测试名。不能用正式对外的模型名（如 `veo-3.1`、
+`gemini-omni-flash`）：插件一旦声明某个模型名，该名字的全部流量都会固定到插件渠道，
+生产上类型 41 的渠道 113/177 就会失效。正式迁移另行进行。
+
+| 测试名 | 上游型号 | 接口 | 分辨率 | 时长 | 任务 |
+|---|---|---|---|---|---|
+| `vertex-omni-1.1-test` | `gemini-omni-1.1-flash-preview` | Interactions（global） | 720p/1080p/4k | 3–10s，延长每次+10s（720p/1080p） | 文生、首尾帧、参考、编辑、延长、多轮 |
+| `vertex-omni-flash-test` | `gemini-omni-flash-preview` | Interactions（global） | **仅 720p** | 3–10s | 文生、首尾帧、参考 |
+| `vertex-veo-3.1-test` | `veo-3.1-generate-001` | predictLongRunning（us-central1） | 720p/1080p/4k | 4/6/8s，延长每次+7s | 文生、首帧/首尾帧、参考图（1–3 张，仅 8s）、延长 |
+| `vertex-veo-3.1-fast-test` | `veo-3.1-fast-generate-001` | predictLongRunning（us-central1） | 720p/1080p/4k | 同上 | 同上 |
+
+- 渠道 `model_mapping` 只能映射到同一行的上游型号。
+- **360p 不上架**：Omni 请求 360p（含 `640x360` 等尺寸）时，按 720p 生成并按 720p 计费；
+  计费枚举 `resolution` 只有 720p/1080p/4k。其他不支持的分辨率（例如 Flash 的 1080p/4k）
+  在插件里直接拒绝，计价表达式也不为它们分档。
+- 插件只适用于单独绑定它的 Task Plugin 渠道，不支持 New API 中继渠道。
+- 1.3.0 起声明 `task-preflight@1`（不再声明 `query-sse-delta@1`），已在锁定宿主
+  `1debc5f3` 及其父提交 `800dc5a` 上运行回归。
+
+### 1.4.0：Omni Flash 与 Veo 3.1 / Fast（2026-10-09 生产账号实测）
+
+- **账号可用性**：Veo 3.0、3.0 Fast、2.0 已返回 404，不再可用。Veo 3.1 Lite 是预览版，
+  按"只上架正式版"的要求不接入；Omni 两个型号是预览版，按用户要求保留。
+- **Omni Flash** 与 1.1 共用 Interactions 新格式（`response_format` 为数组、不需要
+  `Api-Revision`）。上游只接受 720p，其他分辨率报 `Only 720p resolution is supported by this model`。
+  延长报 `Internal error`，所以只开放文生、首尾帧、参考图。
+- **Veo 3.1 和 Veo 3.1 Fast**：
+  - 时长只接受 4/6/8 秒，其他值上游异步拒绝，不计费；默认 8 秒。
+  - 两个型号都实测产出 3840×2160。Fast 的官方型号页没写 4K，但实际支持。
+  - 首帧、首尾帧、参考图（素材类，1–3 张，只能 8 秒）、延长都用 `gcsUri` 输入，
+    成品经 `storageUri` 写入中央桶 `gs://88api-omni-media/vertex-omni/<task_id>/<n>/sample_0.mp4`。
+  - Veo 图片只接受 JPEG/PNG，转存结果若是其他类型，提交前就会拒绝。
+  - 不传任务时，一张图默认按首帧处理（OpenAI `input_reference` 语义），2–3 张按参考图处理。
+  - 不提供带遮罩的编辑。
+- **Veo 输入与成品**：
+  - 输入同样只接受 HTTP(S) URL，经预检由 Worker 转存，跨项目读写同样以 Vertex 服务代理身份进行。
+  - Veo 成品的 `moov` 在文件末尾（不是 faststart），Worker 探测会逐个读取 box 定位。
+  - 关闭音频时成品没有音轨；但延长的成品实测带有音轨。
+- **Veo 计费**：上报秒数、分辨率和 `generate_audio`（默认 true）。
+  - 普通生成按请求的秒数计费。
+  - 延长预扣 8 秒；完成后按"成品实测时长 − 输入实测时长"结算（实测 4→11 秒，即 7 秒），
+    分辨率取成品实测值，音频取请求值。
+  - 价格由宿主的计价表达式按 `u("resolution")` 和 `u("generate_audio")` 分档，本仓库不写售价。
+- **Veo 任务编号**：操作名经 base64url 编码后存为任务编号。轮询时解码并校验格式和型号，
+  再调用 `fetchPredictOperation`；上游会过滤结果时，返回 `raiMediaFilteredReasons` 里的原因。
 
 ### 1.3.0：HTTP(S)输入、中央GCS桶交付、延长按新增秒数计费
 
