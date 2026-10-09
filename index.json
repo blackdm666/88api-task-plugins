@@ -259,8 +259,15 @@
       "protocols": [
         "openai_video"
       ],
-      "latest": "1.0.0",
+      "latest": "1.0.1",
       "versions": [
+        {
+          "version": "1.0.1",
+          "path": "plugins/h3-video/1.0.1/plugin.js",
+          "sha256": "0715cc3066f0dbbc848d19b5498e25138d28b94ddbb359479aaae99ae65529eb",
+          "minApiVersion": 1,
+          "kind": "task"
+        },
         {
           "version": "1.0.0",
           "path": "plugins/h3-video/1.0.0/plugin.js",
