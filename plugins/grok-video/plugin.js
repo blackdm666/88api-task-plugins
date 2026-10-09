@@ -7,6 +7,7 @@ const DEFAULT_RATIO = "16:9";
 const RATIOS = ["16:9", "9:16", "1:1", "4:3", "3:4", "3:2", "2:3"];
 const RESOLUTIONS = ["480p", "720p", "1080p"];
 const BASE_RESOLUTIONS = ["480p", "720p"];
+const SOURCE_ORIGIN = "https://vidgen.x.ai:443";
 
 function usageSchema(resolutions) {
   return {
@@ -213,6 +214,14 @@ function resultURL(value) {
   );
 }
 
+// Sub2API adds video.source_url only when its operator switch is on. It is an
+// anonymous xAI media URL that expires within a day, so it only feeds the
+// one-time result copy; content requests keep the authenticated video.url.
+function sourceURL(value) {
+  const raw = text(object(taskBody(value).video).source_url);
+  return /^https:\/\/[^/]+\/./i.test(raw) && httpOrigin(raw) === SOURCE_ORIGIN ? raw : "";
+}
+
 function absoluteURL(baseUrl, value) {
   const raw = text(value);
   if (!raw) return "";
@@ -267,7 +276,7 @@ export const meta = {
   apiVersion: 1,
   key: "grok-video",
   name: "Grok Video",
-  version: "1.2.1",
+  version: "1.2.2",
   author: { name: "88API" },
   description: {
     en: "Grok Imagine Video through the Sub2API video task API",
@@ -350,7 +359,7 @@ export function parseTaskResult(ctx, value, response) {
     return { status: "IN_PROGRESS", progress: progressFor(body.progress, false) };
   }
   if (["done", "completed", "succeeded", "success"].includes(status)) {
-    const url = absoluteURL(ctx.baseUrl, resultURL(body));
+    const url = sourceURL(body) || absoluteURL(ctx.baseUrl, resultURL(body));
     if (!url) return { status: "FAILURE", progress: "100%", reason: "视频服务报告任务已完成，但未返回视频地址，请联系管理员核查。" };
     return { status: "SUCCESS", progress: "100%", url };
   }
