@@ -37,30 +37,53 @@ Minimax-H3 与 XM-Video 的初始独立版本与当时88API镜像和生产自定
 也可从官方版本历史激活。出厂版没有数据库存档时，不能直接调用版本
 激活接口。不通过停用整个 Alibaba 插件实现回滚。
 
-## Vertex Video（key `vertex-omni`）：独立隔离测试版
+## Vertex Video（key `vertex-omni`）
 
-`vertex-omni@1.4.0` 是独立的 Vertex 视频插件，显示名为 Vertex Video。它不覆盖
+`vertex-omni@1.5.0` 是独立的 Vertex 视频插件，显示名为 Vertex Video。它不覆盖
 `vertex-ai`，不声明渠道类型 41，也不启用动态模型接管。
 插件 key 保持 `vertex-omni` 不变，以免已有渠道绑定和历史任务失联。
 
-插件只声明下表中的隔离测试名。不能用正式对外的模型名（如 `veo-3.1`、
-`gemini-omni-flash`）：插件一旦声明某个模型名，该名字的全部流量都会固定到插件渠道，
-生产上类型 41 的渠道 113/177 就会失效。正式迁移另行进行。
+1.5.0 起插件**接管四个正式模型名**，同时保留隔离测试名（两者共用同一套规格、
+上游型号和计价）。插件一旦声明某个模型名，该名字的全部新流量都固定到绑定本插件的
+Task Plugin 渠道（类型 63）；类型 41 的 Go 适配器不再处理这些名字的新任务，
+已提交的旧任务仍按原平台轮询。
 
-| 测试名 | 上游型号 | 接口 | 分辨率 | 时长 | 任务 |
-|---|---|---|---|---|---|
-| `vertex-omni-1.1-test` | `gemini-omni-1.1-flash-preview` | Interactions（global） | 720p/1080p/4k | 3–10s，延长每次+10s（720p/1080p） | 文生、首尾帧、参考、编辑、延长、多轮 |
-| `vertex-omni-flash-test` | `gemini-omni-flash-preview` | Interactions（global） | **仅 720p** | 3–10s | 文生、首尾帧、参考 |
-| `vertex-veo-3.1-test` | `veo-3.1-generate-001` | predictLongRunning（us-central1） | 720p/1080p/4k | 4/6/8s，延长每次+7s | 文生、首帧/首尾帧、参考图（1–3 张，仅 8s）、延长 |
-| `vertex-veo-3.1-fast-test` | `veo-3.1-fast-generate-001` | predictLongRunning（us-central1） | 720p/1080p/4k | 同上 | 同上 |
+| 正式名 | 测试名 | 上游型号 | 接口 | 分辨率 | 时长 | 任务 |
+|---|---|---|---|---|---|---|
+| `gemini-omni-flash-1.1` | `vertex-omni-1.1-test` | `gemini-omni-1.1-flash-preview` | Interactions（global） | 720p/1080p/4k | 3–10s，延长每次+10s（720p/1080p） | 文生、首尾帧、参考、编辑、延长、多轮 |
+| `gemini-omni-flash` | `vertex-omni-flash-test` | `gemini-omni-flash-preview` | Interactions（global） | **仅 720p** | 3–10s | 文生、首尾帧、参考 |
+| `veo-3.1` | `vertex-veo-3.1-test` | `veo-3.1-generate-001` | predictLongRunning（us-central1） | 720p/1080p/4k | 4/6/8s，延长每次+7s | 文生、首帧/首尾帧、参考图（1–3 张，仅 8s）、延长 |
+| `veo-3.1-fast` | `vertex-veo-3.1-fast-test` | `veo-3.1-fast-generate-001` | predictLongRunning（us-central1） | 720p/1080p/4k | 同上 | 同上 |
 
-- 渠道 `model_mapping` 只能映射到同一行的上游型号。
+- 渠道 `model_mapping` 只能映射到同一行的上游型号。上游型号名、Veo 3.1 Lite 都不由插件声明。
 - **360p 不上架**：Omni 请求 360p（含 `640x360` 等尺寸）时，按 720p 生成并按 720p 计费；
   计费枚举 `resolution` 只有 720p/1080p/4k。其他不支持的分辨率（例如 Flash 的 1080p/4k）
   在插件里直接拒绝，计价表达式也不为它们分档。
 - 插件只适用于单独绑定它的 Task Plugin 渠道，不支持 New API 中继渠道。
-- 1.3.0 起声明 `task-preflight@1`（不再声明 `query-sse-delta@1`），已在锁定宿主
-  `1debc5f3` 及其父提交 `800dc5a` 上运行回归。
+- 1.3.0 起声明 `task-preflight@1`（不再声明 `query-sse-delta@1`）。1.5.0 已在锁定宿主
+  `1debc5f3` 和生产宿主 `f5f882e` 上运行回归。
+
+### 1.5.0：正式名迁移与旧请求格式兼容
+
+迁移前，类型 41 渠道上约 70% 的请求是图生视频，因此 1.5.0 保留旧 Go 适配器接受的格式：
+
+- **图片**：除 HTTP(S) 链接外，还接受 Data URI、PNG/JPEG/WebP 的裸 Base64，以及
+  multipart 图片文件。multipart 字段可以是 `input_reference`、`image`、`images`、`image[]`、
+  `images[]`、`first_frame`、`last_frame`。
+  - 这些图片直接内联给 Google，单张 20MiB 以内，不经过 Worker 转存。
+  - multipart 文件由宿主在发送前展开为 Base64（`__fileRef`）。
+  - 文件分片没有图片类型（或为 `application/octet-stream`）时，按文件扩展名判断。
+  - 链接仍然通过预检转存到中央桶。
+- **视频**：仍然只接受 HTTP(S) 链接。Data URI、Base64、multipart 视频文件一律拒绝，
+  因为延长计费需要 Worker 实测输入时长。
+- **Omni**：一张图片、没有视频、没有指定 `task` 时，按首帧（image_to_video）处理，
+  与旧适配器一致；两张及以上图片按参考图处理。
+- **Veo**：
+  - 支持旧字段 `metadata.video_mode`：`frames` 表示首帧/首尾帧，`reference` 表示参考图。
+    与显式 `task` 冲突时拒绝。
+  - 不传任务时，1–2 张图片按首帧/首尾帧处理，3 张按参考图处理。
+  - 内联图片以 `bytesBase64Encoded` 发送。
+- `gs://` 输入、带账号密码的链接、不支持的图片类型（如 GIF/SVG）一律拒绝。
 
 ### 1.4.0：Omni Flash 与 Veo 3.1 / Fast（2026-10-09 生产账号实测）
 
@@ -106,7 +129,8 @@ Minimax-H3 与 XM-Video 的初始独立版本与当时88API镜像和生产自定
 
   插件用这些`gs://`副本组装Google请求。以下情况都在调用Google**之前**就失败，
   不会产生费用：转存失败、结果不一致、延长输入不是1–30秒。
-  Data URI、multipart文件、`gs://`输入一律拒绝。
+  1.3.0–1.4.0 拒绝 Data URI、multipart 文件和 `gs://` 输入；1.5.0 起图片恢复兼容
+  Data URI、Base64 和 multipart（见上文）。
 - 转存时，渠道当前的Google令牌放在预检JSON**请求体**里（不放请求头）。
   Worker只用它向Google写白名单桶，不存储、不回显。中央桶上的IAM写权限就是
   转存授权，未授权的令牌无法写入，接口因此不会被外人滥用。
@@ -190,7 +214,7 @@ Minimax-H3 与 XM-Video 的初始独立版本与当时88API镜像和生产自定
   不支持独立音频输入，不再默默忽略这些已知字段。
 - 1.3.0起输入只接受HTTP(S) URL（图片20MiB、视频64MiB），由预检转存到中央桶；
   支持PNG/JPEG/WebP/HEIC/HEIF图片和MP4/MOV/WebM视频。
-  不接受Data URI、multipart文件或`gs://`。
+  1.5.0起图片另接受Data URI/Base64/multipart，视频仍只接受链接；均不接受`gs://`。
 - 顶层或`metadata.previous_interaction_id`支持继续Interaction，必须是Google ID，
   不是本站task_id；客户端须保留同账号/项目的上轮上下文。
   1.1.3继承前一轮模式，不再同时发送video_config.task（真实接口禁止此组合）；
