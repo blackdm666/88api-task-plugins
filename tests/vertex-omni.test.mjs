@@ -2,10 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import * as plugin from "../plugins/vertex-omni/plugin.js";
 
-const model = "vertex-omni-1.1-test";
-const flashModel = "vertex-omni-flash-test";
-const veoModel = "vertex-veo-3.1-test";
-const veoFastModel = "vertex-veo-3.1-fast-test";
+const model = "gemini-omni-flash-1.1";
+const flashModel = "gemini-omni-flash";
+const veoModel = "veo-3.1";
+const veoFastModel = "veo-3.1-fast";
 const upstream = "gemini-omni-1.1-flash-preview";
 const bucket = "88api-omni-media";
 const outputPrefix = "gs://" + bucket + "/vertex-omni/task_fixture01/";
@@ -69,21 +69,21 @@ function mp4(seconds, resolution = "720p", version = 0, movieSeconds = seconds) 
   ]).toString("base64");
 }
 
-test("manifest claims the four public names plus QA names, never type 41, upstream IDs or Lite", () => {
+test("manifest claims exactly the four public names, never type 41, upstream IDs or Lite", () => {
   assert.equal(plugin.meta.key, "vertex-omni");
-  assert.equal(plugin.meta.version, "1.5.0");
+  assert.equal(plugin.meta.version, "1.6.0");
   assert.deepEqual(plugin.meta.requiredCapabilities, ["task-preflight@1"], "no SSE host capability");
   assert.deepEqual(plugin.meta.allowedHosts, ["storage.googleapis.com", "us-central1-aiplatform.googleapis.com", "assets.88api.ai"]);
-  assert.deepEqual(plugin.meta.models, [model, flashModel, veoModel, veoFastModel,
-    "veo-3.1", "veo-3.1-fast", "gemini-omni-flash", "gemini-omni-flash-1.1"]);
+  assert.deepEqual([...plugin.meta.models].sort(), [model, flashModel, veoModel, veoFastModel].sort());
   assert.equal(plugin.meta.channelTypes, undefined);
   assert.equal(plugin.meta.dynamicModels, undefined);
   assert.deepEqual(plugin.meta.auth, { type: "oauth2_jwt" });
   for (const name of [upstream, "gemini-omni-flash-preview", "veo-3.1-generate-001", "veo-3.1-fast-generate-001",
-    "veo-3.1-lite-generate-001", "veo-3.1-lite", "veo-3.0-generate-001"]) {
+    "veo-3.1-lite-generate-001", "veo-3.1-lite", "veo-3.0-generate-001",
+    "vertex-omni-1.1-test", "vertex-omni-flash-test", "vertex-veo-3.1-test", "vertex-veo-3.1-fast-test"]) {
     assert.throws(() => plugin.protocols.openai_video.decodeRequest({
       model: name, body: { kind: "json", value: { prompt: "Fixture" } },
-    }), /独立测试模型/);
+    }), /此版本仅接受模型/);
   }
 });
 

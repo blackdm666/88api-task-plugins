@@ -19,27 +19,20 @@ const VEO_TASKS = ["text_to_video", "image_to_video", "reference_to_video", "ext
 const VEO_IMAGE_MIMES = ["image/jpeg", "image/png"];
 const VEO_REGION = "us-central1";
 const VEO_EXTEND_RESERVE_SECONDS = 8;
-// Public names are production since 1.5.0: declaring them pins all of their
-// traffic to channels bound to this plugin (type-41 channels no longer serve
-// them). The isolated test names stay available for QA channels.
+// Declaring a model here pins all of its traffic to channels bound to this
+// plugin, so it fully replaces the type-41 Vertex adaptor for that name.
 const MODELS = {
-  "vertex-omni-1.1-test": { family: "omni", upstream: "gemini-omni-1.1-flash-preview", label: "Omni 1.1",
+  "veo-3.1": { family: "veo", upstream: "veo-3.1-generate-001", label: "Veo 3.1" },
+  "veo-3.1-fast": { family: "veo", upstream: "veo-3.1-fast-generate-001", label: "Veo 3.1 Fast" },
+  "gemini-omni-flash-1.1": { family: "omni", upstream: "gemini-omni-1.1-flash-preview", label: "Omni 1.1",
     resolutions: BILLED_RESOLUTIONS, upgrade360: true, tasks: TASKS, continuation: true },
   // Old Omni Flash: only 720p is accepted; extension fails upstream.
-  "vertex-omni-flash-test": { family: "omni", upstream: "gemini-omni-flash-preview", label: "Omni Flash",
+  "gemini-omni-flash": { family: "omni", upstream: "gemini-omni-flash-preview", label: "Omni Flash",
     resolutions: ["720p"], upgrade360: true, tasks: ["text_to_video", "image_to_video", "reference_to_video"], continuation: false },
-  "vertex-veo-3.1-test": { family: "veo", upstream: "veo-3.1-generate-001", label: "Veo 3.1" },
-  "vertex-veo-3.1-fast-test": { family: "veo", upstream: "veo-3.1-fast-generate-001", label: "Veo 3.1 Fast" },
 };
-Object.assign(MODELS, {
-  "veo-3.1": MODELS["vertex-veo-3.1-test"],
-  "veo-3.1-fast": MODELS["vertex-veo-3.1-fast-test"],
-  "gemini-omni-flash": MODELS["vertex-omni-flash-test"],
-  "gemini-omni-flash-1.1": MODELS["vertex-omni-1.1-test"],
-});
 function spec(model) {
   if (typeof model !== "string" || !Object.prototype.hasOwnProperty.call(MODELS, model)) {
-    throw new Error("此版本仅接受独立测试模型 " + Object.keys(MODELS).join("、") + "。");
+    throw new Error("此版本仅接受模型 " + Object.keys(MODELS).join("、") + "。");
   }
   return MODELS[model];
 }
@@ -62,7 +55,7 @@ export const meta = {
   key: "vertex-omni",
   name: "Vertex Video",
   icon: "VertexAI.Color",
-  version: "1.5.0",
+  version: "1.6.0",
   // HTTP(S) inputs are copied to GCS before submit; requires host preflight.
   requiredCapabilities: ["task-preflight@1"],
   author: { name: "88API", url: "https://github.com/blackdm666/88api-task-plugins" },
@@ -667,7 +660,7 @@ function veoSubmit(ctx, req, conn) {
 export function buildSubmitRequest(ctx) {
   const sp = spec(ctx.model);
   const model = text(ctx.upstreamModel) || sp.upstream;
-  if (model !== ctx.model && model !== sp.upstream) throw new Error("测试渠道只能映射到 " + sp.label + " 的精确上游型号。");
+  if (model !== ctx.model && model !== sp.upstream) throw new Error("渠道只能映射到 " + sp.label + " 的精确上游型号。");
   // Revalidate original inputs rather than trusting a supplied normalized object.
   const req = normalize(ctx.requestBody, ctx.model);
   const conn = connection(ctx);
