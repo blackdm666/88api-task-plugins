@@ -13,7 +13,7 @@ export const meta = {
   key: "h3-video",
   name: "H3-Video",
   description: { en: "MiniMax H3 video integration", zh: "MiniMax H3 视频集成" },
-  version: "1.0.0",
+  version: "1.0.1",
   author: { name: "88API" },
   models: [],
   dynamicModels: true,
@@ -32,11 +32,6 @@ export const meta = {
       description: { en: "Output video resolution", zh: "输出视频分辨率" },
     },
   },
-  usageExamples: [
-    { label: "480P · 5s", facts: { seconds: 5, resolution: "480p" } },
-    { label: "1080P · 5s", facts: { seconds: 5, resolution: "1080p" } },
-    { label: "4K · 10s", facts: { seconds: 10, resolution: "4k" } },
-  ],
 };
 
 // Used only when the request omits them: the upstream catalogue's first output.
