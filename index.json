@@ -472,20 +472,31 @@
       "key": "vertex-omni",
       "name": "Vertex Video",
       "description": {
-        "en": "Isolated Vertex Omni 1.1 / Omni Flash / Veo 3.1 video adapter with service-account authentication",
-        "zh": "使用服务账号鉴权的隔离 Vertex 视频适配器（Omni 1.1、Omni Flash、Veo 3.1）"
+        "en": "Vertex Omni 1.1 / Omni Flash / Veo 3.1 / Veo 3.1 Fast video adapter with service-account authentication and GCS delivery",
+        "zh": "使用服务账号鉴权、GCS 交付的 Vertex 视频适配器（Omni 1.1、Omni Flash、Veo 3.1、Veo 3.1 Fast）"
       },
       "models": [
         "vertex-omni-1.1-test",
         "vertex-omni-flash-test",
         "vertex-veo-3.1-test",
-        "vertex-veo-3.1-fast-test"
+        "vertex-veo-3.1-fast-test",
+        "veo-3.1",
+        "veo-3.1-fast",
+        "gemini-omni-flash",
+        "gemini-omni-flash-1.1"
       ],
       "protocols": [
         "openai_video"
       ],
-      "latest": "1.4.0",
+      "latest": "1.5.0",
       "versions": [
+        {
+          "version": "1.5.0",
+          "path": "plugins/vertex-omni/1.5.0/plugin.js",
+          "sha256": "4d446671bdb5de114b7b013252862c5b12d7fcd82d32c5b543726919d9283f48",
+          "minApiVersion": 1,
+          "kind": "task"
+        },
         {
           "version": "1.4.0",
           "path": "plugins/vertex-omni/1.4.0/plugin.js",
