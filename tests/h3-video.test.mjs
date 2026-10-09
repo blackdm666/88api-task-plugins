@@ -2,20 +2,21 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import * as plugin from '../plugins/h3-video/plugin.js'
 
-const decode = (value, model = 'minimax-h3-768p', upstreamModel = 'minimax_h3') => plugin.protocols.openai_video.decodeRequest({
-  model, upstreamModel, body: { kind: 'json', value: { prompt: 'Fixture', ...value } },
+const decode = (value, model = 'H3-Video') => plugin.protocols.openai_video.decodeRequest({
+  model, body: { kind: 'json', value: { prompt: 'Fixture', ...value } },
 })
-const driver = (value = {}, model = 'minimax-h3-768p', upstreamModel = 'minimax_h3') => ({
-  model, upstreamModel, baseUrl: 'https://example.invalid/', apiKey: 'fixture', publicTaskId: 'task_public01',
-  requestBody: decode(value, model, upstreamModel).requestBody,
+const driver = (value = {}, upstreamModel = 'minimax_h3') => ({
+  model: 'H3-Video', upstreamModel, baseUrl: 'https://example.invalid/', apiKey: 'fixture', publicTaskId: 'task_public01',
+  requestBody: decode(value).requestBody,
 })
+const submit = (value, upstreamModel) => plugin.buildSubmitRequest(driver(value, upstreamModel))
 const image = 'https://example.invalid/i.png'
 const cdn = 'https://cdn.example.invalid/video.mp4?X-Amz-Signature=abc'
 
-test('text-to-video builds the exact upstream request with idempotency and frozen seconds', () => {
+test('text-to-video builds the upstream request with the channel-mapped model and idempotency', () => {
   assert.equal(plugin.meta.key, 'h3-video')
   assert.equal(plugin.meta.name, 'H3-Video')
-  const ctx = driver({ seconds: '6', ratio: '9:16' })
+  const ctx = driver({ seconds: '6', resolution: '1080P', ratio: '9:16' })
   const request = plugin.buildSubmitRequest(ctx)
   assert.equal(request.url, 'https://example.invalid/v1/videos')
   assert.equal(request.method, 'POST')
@@ -23,11 +24,19 @@ test('text-to-video builds the exact upstream request with idempotency and froze
   assert.equal(request.headers['Idempotency-Key'], 'task_public01')
   assert.equal(request.action, 'text_to_video')
   assert.deepEqual(request.body, {
-    model: 'minimax_h3', prompt: 'Fixture', seconds: 6, workflow_id: 'text-to-video', output: { ratio: '768p-9x16' },
+    model: 'minimax_h3', prompt: 'Fixture', seconds: 6, workflow_id: 'text-to-video', output: { ratio: '1080p-9x16' },
   })
-  assert.deepEqual(plugin.extractUsage(ctx), { seconds: 6 })
+  assert.deepEqual(plugin.extractUsage(ctx), { seconds: 6, resolution: '1080p' })
   assert.equal(plugin.extractUsage({ ...ctx, usagePurpose: 'billing_ratios' }), null)
   assert.equal(plugin.extractUsageOnComplete(), null)
+  assert.equal(submit({}, 'minimax_h3-03').body.model, 'minimax_h3-03')
+  assert.equal(plugin.buildSubmitRequest({ ...ctx, upstreamModel: '' }).body.model, 'H3-Video')
+})
+
+test('omitted output uses the upstream catalogue first tier explicitly so billing matches', () => {
+  const ctx = driver()
+  assert.deepEqual(plugin.buildSubmitRequest(ctx).body.output, { ratio: '480p-16x9' })
+  assert.deepEqual(plugin.extractUsage(ctx), { seconds: 5, resolution: '480p' })
 })
 
 test('base URL variants all resolve to the same upstream prefix', () => {
@@ -37,146 +46,126 @@ test('base URL variants all resolve to the same upstream prefix', () => {
   assert.throws(() => plugin.buildSubmitRequest({ ...driver(), baseUrl: '' }), /访问地址/)
 })
 
-for (const [resolution, frames, references, none] of [
-  ['480p', 'fl2v', 'multi-reference', 'text-to-video'],
-  ['768p', 'fl2v', 'multi-reference', 'text-to-video'],
-  ['1080p', 'fl2v', 'multi-reference', 'text-to-video'],
-  ['2k', 'cf-fl2v', 'cf-multi-reference', 'cf-multi-reference'],
-  ['4k', 'cf-fl2v', 'cf-multi-reference', 'cf-multi-reference'],
-]) {
-  test(`${resolution} is pinned by the sales model and selects the matching workflow`, () => {
-    const model = `H3-Video-${resolution.toUpperCase()}`
-    const text = plugin.buildSubmitRequest(driver({}, model)).body
-    assert.equal(text.output.ratio, `${resolution}-16x9`)
-    assert.equal(text.workflow_id, none)
-    const frame = plugin.buildSubmitRequest(driver({ images: [image, image] }, model)).body
-    assert.equal(frame.workflow_id, frames)
-    assert.deepEqual(frame.references.map(x => x.role), ['first_frame', 'last_frame'])
-    const ref = plugin.buildSubmitRequest(driver({ metadata: { reference_images: [image] } }, model)).body
-    assert.equal(ref.workflow_id, references)
-    assert.deepEqual(ref.references, [{ type: 'image', role: 'reference', url: image }])
-    const other = resolution === '480p' ? '1080p' : '480p'
-    assert.throws(() => decode({ resolution: other }, model), /分辨率/)
-    assert.throws(() => decode({ output: { ratio: `${other}-16x9` } }, model), /分辨率/)
-  })
-}
-
-test('unqualified sales names stay at 768p and cannot buy another tier through parameters', () => {
-  assert.equal(plugin.buildSubmitRequest(driver({}, 'minimax-h3')).body.output.ratio, '768p-16x9')
-  assert.equal(plugin.buildSubmitRequest(driver({ resolution: '768p' }, 'minimax-h3')).body.output.ratio, '768p-16x9')
-  assert.throws(() => decode({ resolution: '1080p' }, 'minimax-h3'), /模型名称/)
-  assert.throws(() => decode({ size: '4k' }, 'minimax-h3'), /模型名称/)
-  assert.throws(() => decode({}, 'h3-1080p', 'minimax_h3-03-480p'), /模型映射/)
-  assert.equal(plugin.buildSubmitRequest(driver({}, 'h3', 'minimax_h3-03-1080p')).body.output.ratio, '1080p-16x9')
-  assert.equal(plugin.buildSubmitRequest(driver({}, 'h3-480p', 'minimax_h3-03')).body.model, 'minimax_h3-03')
-  assert.equal(plugin.buildSubmitRequest(driver({}, 'h3-480p', 'dmc-minimax-h3')).body.model, 'minimax_h3')
+test('resolution and ratio come from the request; billed resolution always equals the sent output', () => {
+  const output = value => [submit(value).body.output.ratio, plugin.extractUsage(driver(value)).resolution]
+  assert.deepEqual(output({ output: { ratio: '2K-21x9' } }), ['2k-21x9', '2k'])
+  assert.deepEqual(output({ size: '4k', aspect_ratio: '1:1' }), ['4k-1x1', '4k'])
+  assert.deepEqual(output({ size: '1920x1080', resolution: '768p' }), ['768p-16x9', '768p'])
+  assert.deepEqual(output({ size: '3360x1440', metadata: { resolution: '1080p' } }), ['1080p-21x9', '1080p'])
+  assert.deepEqual(output({ resolution: '1080p', output: { ratio: '1080p-3x2' } }), ['1080p-3x2', '1080p'])
+  for (const input of [{ resolution: '1080p', output: { ratio: '480p-16x9' } }, { resolution: '1080p', size: '2k' },
+    { ratio: '16:9', aspect_ratio: '9:16' }, { output: { ratio: '16:9' } }, { size: '0x0' }]) {
+    assert.throws(() => decode(input), Error, JSON.stringify(input))
+  }
 })
 
-for (const value of [0, 3, 16, -1, 4.5, true, [], {}, ' ', 'Infinity', '5s', Number.MAX_VALUE]) {
+test('capabilities are left to the upstream instead of local allow-lists', () => {
+  // Unpublished tiers/ratios/durations/media counts and workflow choices reach the upstream untouched.
+  assert.equal(submit({ resolution: '720p', ratio: 'adaptive' }).body.output.ratio, '720p-adaptive')
+  assert.equal(submit({ duration: 1 }).body.seconds, 1)
+  assert.equal(submit({ seconds: 60 }).body.seconds, 60)
+  assert.equal(submit({ metadata: { reference_images: Array(20).fill(image) } }).body.references.length, 20)
+  assert.equal(submit({ workflow_id: 'fl2v' }).body.workflow_id, 'fl2v')
+  assert.equal(submit({ prompt: '' }).body.prompt, undefined)
+  const mixed = submit({ metadata: { first_frame_image: image, reference_images: [image] } }).body
+  assert.deepEqual(mixed.references.map(x => x.role), ['first_frame', 'reference'])
+})
+
+for (const value of [0, -1, 4.5, true, [], {}, ' ', 'Infinity', '5s', 3601, Number.MAX_VALUE]) {
   test(`invalid duration ${JSON.stringify(value)} cannot become a billing quantity`, () => {
     assert.throws(() => decode({ duration: value }), /视频时长/)
   })
 }
 
 test('duration aliases must agree and every hook rejects a bypassed billing quantity', () => {
-  assert.equal(plugin.extractUsage(driver({})).seconds, 5)
   assert.equal(plugin.extractUsage(driver({ duration: 15, seconds: '15' })).seconds, 15)
   assert.throws(() => decode({ duration: 5, seconds: 6 }), /不一致/)
   assert.throws(() => decode({ seconds: 5, metadata: { seconds: 15 } }), /不一致/)
   const ctx = driver()
   for (const hook of [plugin.buildSubmitRequest, plugin.extractUsage]) {
     assert.throws(() => hook({ ...ctx, requestBody: { prompt: 'Fixture', duration: 99999 } }), /视频时长/)
-    assert.throws(() => hook({ ...ctx, model: 'h3-480p', requestBody: { prompt: 'Fixture', resolution: '4k' } }), /分辨率/)
+    assert.throws(() => hook({ ...ctx, requestBody: { prompt: 'Fixture', resolution: '4k', output: { ratio: '480p-16x9' } } }), /分辨率/)
   }
 })
 
-test('ratios, sizes, and upstream output selectors normalize to one upstream output id', () => {
-  const ratio = value => plugin.buildSubmitRequest(driver(value, 'h3-1080p')).body.output.ratio
-  assert.equal(ratio({ aspect_ratio: '21:9' }), '1080p-21x9')
-  assert.equal(ratio({ size: '1920x1080' }), '1080p-16x9')
-  assert.equal(ratio({ size: '1088x1920' }), '1080p-9x16')
-  assert.equal(ratio({ size: '3360x1440' }), '1080p-21x9')
-  assert.equal(ratio({ size: '1080p', ratio: '3:2' }), '1080p-3x2')
-  assert.equal(ratio({ output: { ratio: '1080p-2x3' } }), '1080p-2x3')
-  for (const input of [{ ratio: 'adaptive' }, { ratio: '5:4' }, { size: '1000x999' }, { size: 'wide' },
-    { ratio: '16:9', aspect_ratio: '9:16' }, { output: { ratio: '16:9' } }, { size: '0x0' }]) {
-    assert.throws(() => decode(input), Error, JSON.stringify(input))
-  }
-})
-
-for (const input of [
-  { prompt: '' },
-  { images: [image, image, image] },
-  { metadata: { last_frame_image: image } },
-  { metadata: { first_frame_image: image, reference_images: [image] } },
-  { metadata: { reference_images: Array(10).fill(image) } },
-  { videos: Array(4).fill('https://example.invalid/v.mp4') },
-  { metadata: { reference_audios: Array(4).fill('https://example.invalid/a.mp3') } },
-  { metadata: { reference_images: Array(9).fill(image), reference_videos: Array(3).fill('v'), reference_audios: ['a'] } },
-  { media: [{ type: 'image_url', role: 'mask', image_url: image }] },
-  { media: [{ role: 'reference_image', url: '' }] },
-  { references: [{ type: 'file', url: image }] },
-  { references: [{ type: 'video', role: 'first_frame', url: 'v' }] },
-  { references: [{ type: 'image', url: image }], media: [{ role: 'reference_image', url: image }] },
-  { metadata: 'bad' },
-  { workflow_id: 'fl2v' },
-  { prompt_enhance: 'yes' },
+for (const [resolution, frames, references, none] of [
+  ['480p', 'fl2v', 'multi-reference', 'text-to-video'],
+  ['1080p', 'fl2v', 'multi-reference', 'text-to-video'],
+  ['2k', 'cf-fl2v', 'cf-multi-reference', 'cf-multi-reference'],
+  ['4k', 'cf-fl2v', 'cf-multi-reference', 'cf-multi-reference'],
 ]) {
-  test(`reject unsupported or conflicting input ${JSON.stringify(input).slice(0, 90)}`, () => {
-    assert.throws(() => decode(input))
+  test(`${resolution} picks a default workflow from the supplied media`, () => {
+    assert.equal(submit({ resolution }).body.workflow_id, none)
+    const frame = submit({ resolution, images: [image, image] }).body
+    assert.equal(frame.workflow_id, frames)
+    assert.deepEqual(frame.references.map(x => x.role), ['first_frame', 'last_frame'])
+    const ref = submit({ resolution, metadata: { reference_images: [image] } }).body
+    assert.equal(ref.workflow_id, references)
+    assert.deepEqual(ref.references, [{ type: 'image', role: 'reference', url: image }])
   })
 }
 
-test('typed media, upstream-style references, and prompt enhancement translate to upstream references', () => {
-  const typed = plugin.buildSubmitRequest(driver({ metadata: { content: [
+test('typed content, upstream references and metadata extras translate without loss', () => {
+  const ctx = driver({ prompt: undefined, prompt_enhance: 'false', metadata: { seed: 0, prompt_enhance: true, content: [
     { type: 'text', text: 'Typed prompt' },
     { type: 'image_url', role: 'reference_image', image_url: { url: image } },
     { type: 'video_url', video_url: 'https://example.invalid/v.mp4' },
     { type: 'audio_url', role: 'reference_audio', audio_url: 'https://example.invalid/a.mp3' },
-  ] }, prompt_enhance: 'false' })).body
+  ] } })
+  const typed = plugin.buildSubmitRequest(ctx).body
   assert.equal(typed.prompt, 'Typed prompt')
   assert.equal(typed.workflow_id, 'multi-reference')
+  // Top-level fields win over forwarded metadata; untouched extras survive both decode passes.
   assert.equal(typed.prompt_enhance, false)
+  assert.equal(typed.seed, 0)
   assert.deepEqual(typed.references.map(x => [x.type, x.role]), [['image', 'reference'], ['video', 'reference'], ['audio', 'reference']])
-  const native = plugin.buildSubmitRequest(driver({ workflow_id: 'fl2v', references: [
-    { type: 'image', role: 'first_frame', url: image }, { type: 'image', role: 'last_frame', url: image },
-  ] })).body
+  const native = submit({ references: [
+    { type: 'image', role: 'first_frame', url: image }, { type: 'image', role: 'last_frame', url: image, extra: 'kept' },
+  ] }).body
   assert.equal(native.workflow_id, 'fl2v')
-  assert.equal(plugin.buildSubmitRequest(driver({ images: [image] })).action, 'image_to_video')
-  assert.equal(plugin.buildSubmitRequest(driver({ metadata: { reference_audios: ['https://example.invalid/a.mp3'] } })).action, 'reference_to_video')
+  assert.equal(native.references[1].extra, 'kept')
+  assert.equal(submit({ images: [image] }).action, 'image_to_video')
+  assert.equal(submit({ metadata: { reference_audios: ['https://example.invalid/a.mp3'] } }).action, 'reference_to_video')
+  for (const input of [{ metadata: 'bad' }, { references: [{ url: image }] }, { media: [{ role: 'mask', url: image }] },
+    { metadata: { reference_images: [''] } }, { metadata: { content: [{ type: 'text', text: 'Other' }] } }]) {
+    assert.throws(() => decode(input), Error, JSON.stringify(input))
+  }
 })
 
-test('multipart uploads become bounded data-URL placeholders without reading file bytes', () => {
+test('multipart uploads become data-URL placeholders without reading file bytes', () => {
   const decoded = plugin.protocols.openai_video.decodeRequest({
-    model: 'h3-2k',
+    model: 'H3-Video',
     body: { kind: 'multipart', fields: { prompt: ['Fixture'], seconds: ['4'], output: ['{"ratio":"2k-1x1"}'] }, files: [
       { ref: 'request_file:first_frame', field: 'first_frame', mimeType: 'image/png' },
       { ref: 'request_file:last_frame', field: 'last_frame', mimeType: 'image/jpeg' },
     ] },
   })
-  const body = plugin.buildSubmitRequest({ ...driver(), model: 'h3-2k', requestBody: decoded.requestBody }).body
+  const ctx = { ...driver(), requestBody: decoded.requestBody }
+  const body = plugin.buildSubmitRequest(ctx).body
   assert.equal(body.workflow_id, 'cf-fl2v')
   assert.equal(body.output.ratio, '2k-1x1')
+  assert.deepEqual(plugin.extractUsage(ctx), { seconds: 4, resolution: '2k' })
   assert.deepEqual(body.references, [
-    { type: 'image', role: 'first_frame', url: { __fileRef: 'request_file:first_frame', encoding: 'dataUrl', maxBytes: 31457280 } },
-    { type: 'image', role: 'last_frame', url: { __fileRef: 'request_file:last_frame', encoding: 'dataUrl', maxBytes: 31457280 } },
+    { type: 'image', role: 'first_frame', url: { __fileRef: 'request_file:first_frame', encoding: 'dataUrl' } },
+    { type: 'image', role: 'last_frame', url: { __fileRef: 'request_file:last_frame', encoding: 'dataUrl' } },
   ])
   const refs = plugin.protocols.openai_video.decodeRequest({
-    model: 'h3-480p',
-    body: { kind: 'multipart', fields: { prompt: ['Fixture'], metadata: ['{"reference_images":["' + image + '"]}'] }, files: [
+    model: 'H3-Video',
+    body: { kind: 'multipart', fields: { prompt: ['Fixture'], metadata: ['{"reference_images":["' + image + '"],"seed":1}'] }, files: [
       { ref: 'request_file:reference_videos', field: 'reference_videos[]', mimeType: 'video/mp4' },
       { ref: 'request_file:audio', field: 'audio', mimeType: 'audio/mpeg' },
     ] },
   }).requestBody
-  assert.deepEqual(refs.references.map(x => [x.type, typeof x.url === 'string' ? x.url : x.url.maxBytes]),
-    [['image', image], ['video', 52428800], ['audio', 15728640]])
+  assert.deepEqual(refs.references.map(x => [x.type, typeof x.url === 'string' ? x.url : x.url.__fileRef]),
+    [['image', image], ['video', 'request_file:reference_videos'], ['audio', 'request_file:audio']])
+  assert.equal(plugin.buildSubmitRequest({ ...driver(), requestBody: refs }).body.seed, 1)
   for (const files of [
     [{ ref: 'request_file:image', field: 'image', mimeType: 'video/mp4' }],
     [{ ref: 'request_file:mask', field: 'mask', mimeType: 'image/png' }],
   ]) {
-    assert.throws(() => plugin.protocols.openai_video.decodeRequest({ model: 'h3', body: { kind: 'multipart', fields: { prompt: ['x'] }, files } }), /上传/)
+    assert.throws(() => plugin.protocols.openai_video.decodeRequest({ model: 'H3-Video', body: { kind: 'multipart', fields: { prompt: ['x'] }, files } }), /上传/)
   }
-  assert.throws(() => plugin.protocols.openai_video.decodeRequest({ model: 'h3', body: { kind: 'multipart', fields: { prompt: ['a', 'b'] }, files: [] } }), /重复/)
+  assert.throws(() => plugin.protocols.openai_video.decodeRequest({ model: 'H3-Video', body: { kind: 'multipart', fields: { prompt: ['a', 'b'] }, files: [] } }), /重复/)
 })
 
 test('submission and polling protect the task lifecycle and wait for the anonymous CDN link', () => {
@@ -214,9 +203,9 @@ test('artifacts use only the anonymous CDN link and never send channel credentia
   assert.throws(() => plugin.buildContentRequest({ artifactKey: 'audio', data, clientRequest: { method: 'GET' } }), /视频资源/)
   const output = plugin.protocols.openai_video.render({}, {
     task_id: 'public', status: 'FAILURE', progress: '100%', updated_at: 5, fail_reason: 'x',
-    properties: { origin_model_name: 'h3-1080p' },
+    properties: { origin_model_name: 'H3-Video' },
   })
   assert.deepEqual(output.error, { code: 'video_task_failed', message: 'x' })
   assert.equal(output.completed_at, 5)
-  assert.equal(output.model, 'h3-1080p')
+  assert.equal(output.model, 'H3-Video')
 })

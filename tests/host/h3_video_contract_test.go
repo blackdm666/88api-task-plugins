@@ -83,16 +83,17 @@ func TestIndependentPluginCatalogueH3VideoHTTP(t *testing.T) {
 	}
 	decoded, err := plugin.Engine.CallPath(context.Background(), "protocols",
 		[]string{"openai_video", "decodeRequest"}, map[string]any{
-			"model": "H3-Video-4K", "body": map[string]any{"kind": "json", "value": map[string]any{
-				"prompt": "Fixture", "seconds": "6", "ratio": "9:16",
+			"model": "H3-Video", "body": map[string]any{"kind": "json", "value": map[string]any{
+				"prompt": "Fixture", "seconds": "6", "resolution": "4K", "ratio": "9:16",
 				"images": []any{"https://example.invalid/a.png", "https://example.invalid/b.png"},
 			}},
 		})
 	require.NoError(t, err)
-	ctx := map[string]any{"model": "H3-Video-4K", "upstreamModel": "minimax_h3", "publicTaskId": "task_public01",
+	ctx := map[string]any{"model": "H3-Video", "upstreamModel": "minimax_h3", "publicTaskId": "task_public01",
 		"baseUrl": server.URL + "/v1", "apiKey": "fixture", "requestBody": decoded.(map[string]any)["requestBody"]}
 	usage := call("extractUsage", ctx).(map[string]any)
 	assert.EqualValues(t, 6, usage["seconds"])
+	assert.Equal(t, "4k", usage["resolution"])
 	submit := call("buildSubmitRequest", ctx).(map[string]any)
 	accepted := call("parseSubmitResponse", ctx, map[string]any{"body": send(submit)}).(map[string]any)
 	assert.Equal(t, "task_up", accepted["taskId"])
@@ -120,9 +121,9 @@ func TestIndependentPluginCatalogueH3VideoHTTP(t *testing.T) {
 	assert.Equal(t, 2, polls)
 
 	for _, tc := range []map[string]any{
-		{"prompt": "Fixture", "duration": 3},
-		{"prompt": "Fixture", "duration": 16},
-		{"prompt": "Fixture", "duration": 5, "resolution": "480p"},
+		{"prompt": "Fixture", "duration": 0},
+		{"prompt": "Fixture", "duration": 3601},
+		{"prompt": "Fixture", "duration": 5, "resolution": "480p", "output": map[string]any{"ratio": "4k-16x9"}},
 		{"prompt": "Fixture", "duration": true},
 		{"prompt": "Fixture", "seconds": 5, "metadata": map[string]any{"seconds": 15}},
 	} {
