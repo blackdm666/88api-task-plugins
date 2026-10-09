@@ -275,30 +275,34 @@ plugin or require a NewAPI image rebuild.
 
 ## H3-Video
 
-`h3-video` 从 Minimax-H3 插件独立派生，对接 MiniMax H3 统一视频接口
-（`POST /v1/videos`、`GET /v1/videos/{id}`），不替换原 `minimax-h3`
-及其历史任务。渠道 Base URL 填站点根地址；带 `/v1` 或 `/draw/api/v1`
-后缀也会被归一化。上游模型默认 `minimax_h3`，渠道也可映射到
-`minimax_h3-03` 等已公布变体。
+`h3-video` 是对接 MiniMax H3 统一视频接口（`POST /v1/videos`、
+`GET /v1/videos/{id}`）的独立插件，不替换原 `minimax-h3` 及其历史任务。
+渠道 Base URL 填站点根地址，带 `/v1` 或 `/draw/api/v1` 后缀也会被归一化。
 
-- 分辨率由销售型号决定：模型名以 `480p`、`768p`、`1080p`、`2k`、`4k`
-  结尾（例如 `H3-Video-1080P`），也可由映射目标的同类后缀决定；不带后缀
-  的型号固定 768p。请求中的 `resolution`、`size`、`output.ratio` 只能确认
-  该档位，不能借参数切换到其他价位。每个销售型号单独配置秒价。
-- 时长 4–15 秒整数，默认 5 秒；`duration`、`seconds` 与 metadata 中的
-  时长必须一致。上游查询不返回计费秒数，按校验后的请求秒数结算。
-- 画幅 16:9、9:16、1:1、2:3、3:2、3:4、4:3、21:9，默认 16:9；
-  不支持 `adaptive`。`size` 可写宽x高，按比例换算。
-- 工作流自动选择：无素材 `text-to-video`，首尾帧 `fl2v`，参考素材
-  `multi-reference`；2K/4K 改用 `cf-fl2v` / `cf-multi-reference`（纯文本
-  2K/4K 也走 `cf-multi-reference`，已实测可出片）。显式 `workflow_id`
-  只能与自动结果一致。
-- 素材沿用 Minimax-H3 的字段：`images` 为首/尾帧，`metadata.reference_*`
-  为参考图片/视频/音频，也接受 `metadata.content`、`media` 和上游格式
-  `references`。参考图片≤9、视频≤3、音频≤3、合计≤12；首尾帧不能与
-  参考素材混用，尾帧必须有首帧。multipart 上传的文件以 data URL 内联
-  （图片/视频/音频分别限 30/50/15 MB）。
-- 上游以 `Idempotency-Key` 去重，插件传入网关任务号，宿主重试不会重复生成。
+**能力以上游为准。** 插件只做字段转换，不在本地限制分辨率、画幅、时长、
+素材数量/组合或工作流；不合规的请求由上游在创建任务前以 400
+（`submission_created=false`）拒绝，不会生成或扣费。
+
+- 上游模型使用渠道模型映射后的名称（如销售名 `H3-Video` → `minimax_h3`）。
+- 分辨率与画幅来自请求：`output.ratio`（上游格式，如 `1080p-16x9`），或
+  `resolution`/`size`（档位如 `2k`，或宽x高换算比例）加 `ratio`/
+  `aspect_ratio`。未提供时显式使用上游目录第一档 `480p-16x9`。
+- 时长取 `duration`/`seconds`/metadata，默认 5 秒。
+- 唯一的本地约束是计费安全：时长须为正整数且不超过宿主上限 3600 秒；
+  同一参数的多个别名必须一致，保证扣费数量与发给上游的值相同。
+- 计费用量为 `seconds` 与 `resolution`（枚举 480p/768p/1080p/2k/4k，即上游
+  计价档位）。管理员须为模型配置按分辨率区分的表达式，例如
+  `u("resolution") == "1080p" ? tier("1080p", u("seconds") * 单价) : ...`；
+  不在枚举内的分辨率由宿主以 `plugin_usage_invalid` 拒绝，上游新增档位时需
+  同步更新插件枚举与价格。
+- 未显式传 `workflow_id` 时按素材补默认值：无素材 `text-to-video`、首尾帧
+  `fl2v`、参考素材 `multi-reference`，2K/4K 用 `cf-fl2v`/`cf-multi-reference`；
+  显式值原样透传。
+- 素材：`images` 为首/尾帧（沿用旧插件约定），`metadata.reference_*`、
+  `metadata.content`、`media` 与上游格式 `references` 均可使用，全部汇总转发。
+  multipart 上传的文件由宿主内联为 data URL。metadata 中未使用的字段
+  （如 `prompt_enhance`、`seed`）原样转发给上游。
+- 网关任务号作为 `Idempotency-Key`，上游据此去重，宿主重试不会重复生成。
 - 上游刚报告完成时只给出需要鉴权的站内下载地址，稍后才出现可匿名访问的
   对象存储签名直链（约 12 小时有效，成品保留 1 天）。插件在直链出现前保持
   99% 进行中继续轮询，最多 60 轮后判失败；内容只通过直链免凭证获取，
