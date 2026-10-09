@@ -71,7 +71,7 @@ function mp4(seconds, resolution = "720p", version = 0, movieSeconds = seconds) 
 
 test("manifest claims exactly the four public names, never type 41, upstream IDs or Lite", () => {
   assert.equal(plugin.meta.key, "vertex-omni");
-  assert.equal(plugin.meta.version, "1.6.0");
+  assert.equal(plugin.meta.version, "1.6.1");
   assert.deepEqual(plugin.meta.requiredCapabilities, ["task-preflight@1"], "no SSE host capability");
   assert.deepEqual(plugin.meta.allowedHosts, ["storage.googleapis.com", "us-central1-aiplatform.googleapis.com", "assets.88api.ai"]);
   assert.deepEqual([...plugin.meta.models].sort(), [model, flashModel, veoModel, veoFastModel].sort());
@@ -83,7 +83,7 @@ test("manifest claims exactly the four public names, never type 41, upstream IDs
     "vertex-omni-1.1-test", "vertex-omni-flash-test", "vertex-veo-3.1-test", "vertex-veo-3.1-fast-test"]) {
     assert.throws(() => plugin.protocols.openai_video.decodeRequest({
       model: name, body: { kind: "json", value: { prompt: "Fixture" } },
-    }), /此版本仅接受模型/);
+    }), /不支持该模型/);
   }
 });
 
@@ -162,7 +162,7 @@ test("videos are HTTP(S) only; images also accept Data URI, raw Base64 and multi
     { type: "image", mime_type: "image/png", uri: "gs://" + bucket + "/vertex-omni-inputs/2026-10-09/0.png" },
   ]);
   assert.equal(plugin.buildPreflightRequest(driver({ image: png })), null, "inline images need no preflight");
-  assert.throws(() => decode({ metadata: { output_gcs_uri: "gs://fixture-bucket/out/" } }), /由插件管理/);
+  assert.throws(() => decode({ metadata: { output_gcs_uri: "gs://fixture-bucket/out/" } }), /由平台管理/);
 });
 
 test("multipart accepts image files (inlined by the host) and rejects video files", () => {
@@ -614,7 +614,7 @@ test("Veo requests are bounded to what Google accepts", () => {
     [{ task: "extend", video: clip, size: "1280x720" }, /延长沿用/], [{ task: "edit", video: clip }, /只支持/],
     [{ task: "text_to_video", image: still }, /不能同时/], [{ generate_audio: "false" }, /true 或 false/],
     [{ seed: -1 }, /seed/], [{ temperature: 0.5 }, /不支持 temperature/], [{ previous_interaction_id: "v1_x" }, /不支持 previous/],
-    [{ audio: "https://cdn.example.com/a.mp3" }, /音频/], [{ parameters: {} }, /由插件管理/], [{ n: 2 }, /单个视频/],
+    [{ audio: "https://cdn.example.com/a.mp3" }, /音频/], [{ parameters: {} }, /由平台管理/], [{ n: 2 }, /只生成 1 个视频/],
     [{ video: "data:video/mp4;base64,AAAA", task: "extend" }, /HTTP\(S\) 链接/],
   ]) assert.throws(() => decode(value, veoModel), message, JSON.stringify(value));
   assert.throws(() => plugin.buildSubmitRequest(ingested(driver({ image: "https://cdn.example.com/a.webp" }, veoModel, veoModel),
