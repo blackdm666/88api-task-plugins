@@ -1,7 +1,10 @@
 import assert from "node:assert/strict"
+import { createHash } from "node:crypto"
+import { readFile } from "node:fs/promises"
 import test from "node:test"
 
 import * as plugin from "../plugins/grok-video/plugin.js"
+import * as old from "./fixtures/grok-video-1.1.2.js"
 
 function decode(value = {}) {
   return plugin.protocols.openai_video.decodeRequest({
@@ -182,6 +185,74 @@ test("resolves relative result URLs without relying on unavailable URL global", 
     { status: 200 },
   )
   assert.equal(result.url, "https://sub.example.invalid/videos/task_fixture.mp4")
+})
+
+test("1.2.0 reads ratio as an alias of aspect_ratio", () => {
+  assert.equal(plugin.meta.version, "1.2.0")
+  assert.equal(decode({ ratio: "9:16" }).requestBody.aspect_ratio, "9:16")
+  assert.equal(decode({ metadata: { ratio: "1:1" } }).requestBody.aspect_ratio, "1:1")
+  assert.equal(decode({ ratio: "3:4", aspect_ratio: "3:4", size: "3:4" }).requestBody.aspect_ratio, "3:4")
+  assert.equal(decode({ ratio: "4:3", metadata: { aspect_ratio: "4:3", ratio: "4:3" } }).requestBody.aspect_ratio, "4:3")
+  // A pixel size is not a ratio, so the alias supplies the ratio instead of failing.
+  assert.equal(decode({ ratio: "9:16", size: "1280x720" }).requestBody.aspect_ratio, "9:16")
+  const multipart = plugin.protocols.openai_video.decodeRequest({
+    model: "grok-imagine-video-1.5",
+    body: { kind: "multipart", fields: { prompt: ["Fixture prompt"], ratio: ["2:3"] }, files: [] },
+  })
+  assert.equal(multipart.requestBody.aspect_ratio, "2:3")
+  assert.equal(plugin.buildSubmitRequest({
+    requestBody: { prompt: "Fixture prompt", ratio: "9:16" }, baseUrl: "https://sub.example.invalid", apiKey: "fixture",
+  }).body.aspect_ratio, "9:16")
+})
+
+test("1.2.0 rejects conflicting or unsupported ratio aliases in Chinese", () => {
+  for (const input of [
+    { ratio: "9:16", aspect_ratio: "16:9" },
+    { ratio: "9:16", size: "16:9" },
+    { ratio: "9:16", metadata: { aspect_ratio: "16:9" } },
+    { metadata: { ratio: "9:16", aspect_ratio: "1:1" } },
+    { ratio: "9:16", metadata: { ratio: "1:1" } },
+  ]) {
+    assert.throws(() => decode(input), /画幅比例参数不一致/, JSON.stringify(input))
+  }
+  assert.throws(() => decode({ ratio: "21:9" }), /当前模型不支持该画幅比例，请选择：/)
+})
+
+test("requests without ratio are identical to deployed 1.1.2", async () => {
+  const source = (await readFile(new URL("./fixtures/grok-video-1.1.2.js", import.meta.url), "utf8")).replace(/\r\n/g, "\n")
+  // Production task_plugins grok-video 1.1.2 source_hash, checked 2026-10-10.
+  assert.equal(createHash("sha256").update(source).digest("hex"), "d18f6a3c7919bfd341ee8118e54b2a6dfd9c43c2277cfa2eeec05a6cd84fac01")
+  const inputs = [
+    {},
+    { duration: 5, resolution: "480p" },
+    { seconds: 15, quality: "1080" },
+    { aspect_ratio: "9:16" },
+    { size: "1:1" },
+    { aspect_ratio: "3:4", size: "16:9", metadata: { aspect_ratio: "1:1" } },
+    { aspect_ratio: "16:9", size: "1280x720" },
+    { metadata: { aspect_ratio: "2:3", resolution: "720" } },
+    { image: "https://example.invalid/a.png", aspect_ratio: "4:3" },
+    { prompt: "", images: ["https://example.invalid/a.png"] },
+    { input_reference: { url: "https://example.invalid/a.png" } },
+  ]
+  for (const model of ["grok-imagine-video-1.5", "grok-imagine-video", "grok-imagine-video-2"]) {
+    for (const input of inputs) {
+      if (model === "grok-imagine-video" && /1080/.test(JSON.stringify(input))) continue
+      const ctx = { model, body: { kind: "json", value: { prompt: "Fixture prompt", ...input } } }
+      const decoded = plugin.protocols.openai_video.decodeRequest(ctx)
+      assert.deepEqual(decoded, old.protocols.openai_video.decodeRequest(ctx))
+      const driver = { model, upstreamModel: model, requestBody: decoded.requestBody, baseUrl: "https://sub.example.invalid", apiKey: "fixture" }
+      assert.deepEqual(plugin.buildSubmitRequest(driver), old.buildSubmitRequest(driver))
+      assert.deepEqual(plugin.extractUsage(driver), old.extractUsage(driver))
+      const response = { body: { request_id: "task_fixture", status: "queued" } }
+      assert.deepEqual(plugin.parseSubmitResponse(driver, response), old.parseSubmitResponse(driver, response))
+    }
+  }
+  for (const input of [{ size: "1280x720" }, { aspect_ratio: "21:9" }, { duration: 0 }, { resolution: "4k" }]) {
+    const ctx = { model: "grok-imagine-video-1.5", body: { kind: "json", value: { prompt: "Fixture prompt", ...input } } }
+    assert.throws(() => old.protocols.openai_video.decodeRequest(ctx))
+    assert.throws(() => plugin.protocols.openai_video.decodeRequest(ctx))
+  }
 })
 
 test("rejects unsupported resolution, duration, and multiple images", () => {

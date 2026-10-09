@@ -109,23 +109,7 @@ function resolutionFor(request, model = MODEL) {
 
 function ratioFor(request) {
   const metadata = metadataFor(request.metadata);
-  let ratio = first(request.aspect_ratio, request.size, metadata.aspect_ratio);
-  if (first(request.ratio, metadata.ratio)) {
-    // ratio is an alias of aspect_ratio. All ratio fields must agree, so the
-    // alias never overrides a value that requests without it already used.
-    const values = [
-      request.aspect_ratio,
-      request.ratio,
-      RATIOS.includes(text(request.size)) ? request.size : "",
-      metadata.aspect_ratio,
-      metadata.ratio,
-    ].map(text).filter(Boolean);
-    if (values.some((value) => value !== values[0])) {
-      throw new Error("画幅比例参数不一致：ratio、aspect_ratio、size 与 metadata 中的比例请只填写一个，或保持相同。");
-    }
-    ratio = values[0];
-  }
-  ratio = ratio || DEFAULT_RATIO;
+  const ratio = first(request.aspect_ratio, request.size, metadata.aspect_ratio) || DEFAULT_RATIO;
   if (!RATIOS.includes(ratio)) {
     throw new Error("当前模型不支持该画幅比例，请选择：" + RATIOS.join("、") + "。");
   }
@@ -276,7 +260,7 @@ export const meta = {
   apiVersion: 1,
   key: "grok-video",
   name: "Grok Video",
-  version: "1.2.0",
+  version: "1.1.2",
   author: { name: "88API" },
   description: {
     en: "Grok Imagine Video through the Sub2API video task API",

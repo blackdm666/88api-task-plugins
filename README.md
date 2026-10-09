@@ -287,6 +287,13 @@ not alter request handling or task billing.
 
 ## Grok Video
 
+`grok-video@1.2.0` reads `ratio` and `metadata.ratio` as aliases of
+`aspect_ratio`; 1.1.2 ignored them and silently generated 16:9. When an alias
+is present, `aspect_ratio`, a ratio-valued `size`, `metadata.aspect_ratio` and
+the aliases must all agree, otherwise the request is rejected with a Chinese
+400 message. Requests without the aliases decode, submit and bill exactly as
+1.1.2 (asserted against the archived 1.1.2 source).
+
 `grok-video@1.1.2` extracts the upstream error text (`error.message`,
 `message`, `detail`, or plain-text response) and uses it as the task failure
 reason. NewAPI still wraps that reason in its own task/API response because the
