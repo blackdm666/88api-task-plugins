@@ -94,6 +94,72 @@ func TestXinMengVS25MappedSales(t *testing.T) {
 	}
 }
 
+func TestXinMengSD20FourKMappedSales(t *testing.T) {
+	source, err := os.ReadFile("../../plugins/tasks/xm-video/plugin.js")
+	require.NoError(t, err)
+	plugin, err := NewRegistry().Register(string(source), Options{})
+	require.NoError(t, err)
+	submit := func(input map[string]any) (map[string]any, map[string]any, error) {
+		t.Helper()
+		value := map[string]any{"prompt": "Fixture"}
+		for key, item := range input {
+			value[key] = item
+		}
+		decoded, err := plugin.Engine.Call(context.Background(), "decodeRequest", map[string]any{
+			"model": "SD2.0 4k", "body": map[string]any{"kind": "json", "value": value},
+		})
+		if err != nil {
+			return nil, nil, err
+		}
+		driver := map[string]any{
+			"model": "SD2.0 4k", "upstreamModel": "lltai-vs-2.0",
+			"requestBody": decoded.(map[string]any)["requestBody"], "baseUrl": "https://example.invalid",
+		}
+		request, err := plugin.Engine.Call(context.Background(), "buildSubmitRequest", driver)
+		require.NoError(t, err)
+		usage, err := plugin.Engine.Call(context.Background(), "extractUsage", driver)
+		require.NoError(t, err)
+		return request.(map[string]any)["body"].(map[string]any), usage.(map[string]any), nil
+	}
+
+	body, usage, err := submit(map[string]any{"metadata": map[string]any{"resolution": "720p"}, "resolution": "480p"})
+	require.NoError(t, err)
+	assert.Equal(t, "lltai-vs-2.0", body["model"])
+	assert.Equal(t, "4K", body["resolution"])
+	assert.Equal(t, "1:1", body["ratio"])
+	assert.EqualValues(t, 5, body["duration"])
+	assert.Equal(t, body["duration"], usage["seconds"])
+
+	body, usage, err = submit(map[string]any{"seconds": "15", "ratio": "21:9"})
+	require.NoError(t, err)
+	assert.Equal(t, "21:9", body["ratio"])
+	assert.EqualValues(t, 15, body["duration"])
+	assert.Equal(t, body["duration"], usage["seconds"])
+
+	refs := func(n int) []string {
+		values := make([]string, n)
+		for i := range values {
+			values[i] = "https://example.invalid/media"
+		}
+		return values
+	}
+	for _, tc := range []struct {
+		input map[string]any
+		want  string
+	}{
+		{map[string]any{"duration": 16}, "4 到 15 秒"},
+		{map[string]any{"duration": 3}, "4 到 15 秒"},
+		{map[string]any{"ratio": "auto"}, "当前模型不支持自动比例"},
+		{map[string]any{"images": refs(10)}, "最多支持 9 张"},
+		{map[string]any{"images": refs(9), "videos": refs(3), "audios": refs(1)}, "合计最多 12 个"},
+		{map[string]any{"firstFrame": "https://example.invalid/f", "images": refs(1)}, "首尾帧不能与普通参考"},
+		{map[string]any{"generateAudio": false}, "不支持音频开关"},
+	} {
+		_, _, err := submit(tc.input)
+		assert.ErrorContains(t, err, tc.want)
+	}
+}
+
 func TestXinMengFriendlyMessages(t *testing.T) {
 	source, err := os.ReadFile("../../plugins/tasks/xm-video/plugin.js")
 	require.NoError(t, err)

@@ -10,6 +10,8 @@ function addModel(name, upstream, resolution, overrides) {
     audios: 3, framesExclusive: false, promptless: false, nativeMedia: false,
     generateAudio: false, visualWithAudio: false, totalMedia: 0 }, overrides);
 }
+const SD20 = { defaultRatio: "1:1", framesExclusive: true, promptless: true,
+  images: 9, videos: 3, audios: 3, totalMedia: 12 };
 for (const resolution of ["480p", "720p", "1080p"]) {
   const wan = "wan3.0-video-" + resolution;
   addModel(wan, wan, resolution, { maxDuration: 30, ratios: RATIOS, promptless: true,
@@ -22,10 +24,11 @@ for (const resolution of ["480p", "720p", "1080p"]) {
     generateAudio: true });
   // The live cvd catalog has four qualities. A sales alias is mandatory so
   // the 480/720/1080 tiers cannot accidentally all generate the default 480p.
-  addModel("SD2.0 " + resolution.toUpperCase(), "cvd-seedance-2.0", resolution, {
-    defaultRatio: "1:1", framesExclusive: true, promptless: true,
-    images: 9, videos: 3, audios: 3, totalMedia: 12 });
+  addModel("SD2.0 " + resolution.toUpperCase(), "cvd-seedance-2.0", resolution, SD20);
 }
+// The upstream catalog spells this quality "4K"; the sales name keeps the
+// channel's lowercase "4k".
+addModel("SD2.0 4k", "cvd-seedance-2.0", "4K", SD20);
 for (const resolution of ["480p", "720p"]) {
   const name = "seedance-2.0-mini-" + resolution;
   addModel(name, name, resolution, {});
@@ -46,7 +49,7 @@ export const meta = {
   apiVersion: 1,
   key: "xm-video",
   name: "XM-Video",
-  version: "3.0.6",
+  version: "3.0.7",
   author: { name: "88API" },
   description: { en: "88API channel integration plugin", zh: "88API渠道集成插件" },
   models: [],
