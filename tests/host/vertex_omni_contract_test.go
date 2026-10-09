@@ -1,17 +1,14 @@
 package jsplugin
 
 import (
-	"bufio"
-	"bytes"
 	"context"
-	"crypto/sha256"
 	"encoding/base64"
 	"encoding/binary"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -65,9 +62,8 @@ func TestIndependentPluginCatalogueVertexOmniHTTP(t *testing.T) {
 	t.Cleanup(func() { acquireAccessToken = originalAuth; pluginAuthCache = sync.Map{} })
 	key, err := common.Marshal(vertexcore.Credentials{ProjectID: "fixture-project", PrivateKey: "fixture-not-a-key"})
 	require.NoError(t, err)
-	// >1MiB inline output proves polling does not hit the JSON submission cap.
-	videoBytes := bytes.Repeat([]byte("fixture-mp4"), 110000)
-	encoded := base64.StdEncoding.EncodeToString(videoBytes)
+	// 1.3.0 always requests URI delivery: no video bytes reach NewAPI memory.
+	stored := "gs://88api-omni-media/vertex-omni/task_publicfixture/fixture.mp4"
 	polls, submits := 0, 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "Bearer fixture-oauth", r.Header.Get("Authorization"))
@@ -92,6 +88,8 @@ func TestIndependentPluginCatalogueVertexOmniHTTP(t *testing.T) {
 			}
 			assert.Equal(t, "4s", format["duration"])
 			assert.Equal(t, "9:16", format["aspect_ratio"])
+			assert.Equal(t, "uri", format["delivery"])
+			assert.Equal(t, "gs://88api-omni-media/vertex-omni/task_publicfixture/", format["gcs_uri"])
 			_, err = io.WriteString(w, `{"id":"v1_fixture","status":"in_progress"}`)
 			require.NoError(t, err)
 		case http.MethodGet:
@@ -99,7 +97,7 @@ func TestIndependentPluginCatalogueVertexOmniHTTP(t *testing.T) {
 			assert.Equal(t, "/v1beta1/projects/fixture-project/locations/global/interactions/v1_fixture", r.URL.Path)
 			body := `{"id":"v1_fixture","status":"in_progress"}`
 			if polls > 1 {
-				body = `{"id":"v1_fixture","status":"completed","outputs":[{"type":"model_output","content":[{"type":"video","mime_type":"video/mp4","data":"` + encoded + `"}]}],"usage":{"total_output_tokens":28832}}`
+				body = `{"id":"v1_fixture","status":"completed","outputs":[{"type":"model_output","content":[{"type":"video","mime_type":"video/mp4","uri":"` + stored + `"}]}],"usage":{"total_output_tokens":28832}}`
 			}
 			_, err = io.WriteString(w, body)
 			require.NoError(t, err)
@@ -112,7 +110,7 @@ func TestIndependentPluginCatalogueVertexOmniHTTP(t *testing.T) {
 		OriginModelName: "vertex-omni-1.1-test",
 		ChannelMeta: &relaycommon.ChannelMeta{ChannelType: constant.ChannelTypeTaskPlugin,
 			ChannelBaseUrl: server.URL, ApiKey: string(key), UpstreamModelName: "gemini-omni-1.1-flash-preview"},
-		TaskRelayInfo: &relaycommon.TaskRelayInfo{PublicTaskID: "task_public"},
+		TaskRelayInfo: &relaycommon.TaskRelayInfo{PublicTaskID: "task_publicfixture"},
 	}
 	adaptor := New(plugin)
 	adaptor.Init(info)
@@ -135,7 +133,7 @@ func TestIndependentPluginCatalogueVertexOmniHTTP(t *testing.T) {
 	assert.Equal(t, "v1_fixture", accepted.UpstreamTaskID)
 	assert.NotContains(t, string(accepted.TaskData), "fixture-oauth")
 
-	task := &model.Task{TaskID: "task_public",
+	task := &model.Task{TaskID: "task_publicfixture",
 		Properties:  model.Properties{OriginModelName: info.OriginModelName, UpstreamModelName: info.UpstreamModelName},
 		PrivateData: model.TaskPrivateData{UpstreamTaskID: accepted.UpstreamTaskID, PluginState: accepted.PluginState}}
 	for _, expected := range []string{"IN_PROGRESS", "SUCCESS"} {
@@ -149,7 +147,8 @@ func TestIndependentPluginCatalogueVertexOmniHTTP(t *testing.T) {
 		assert.Equal(t, expected, result.Status)
 		assert.Empty(t, result.UsageFacts, "token counts must not alter requested seconds")
 		if expected == "SUCCESS" {
-			assert.Equal(t, "data:video/mp4;base64,"+encoded, result.Url)
+			assert.Equal(t, "https://storage.googleapis.com/storage/v1/b/88api-omni-media/o/"+
+				url.PathEscape("vertex-omni/task_publicfixture/fixture.mp4")+"?alt=media", result.Url)
 			assert.Equal(t, "100%", result.Progress)
 		} else {
 			assert.NotEqual(t, "100%", result.Progress)
@@ -176,24 +175,13 @@ func TestIndependentPluginCatalogueVertexOmniHTTP(t *testing.T) {
 	assert.True(t, content.Credentialless)
 	assert.Empty(t, content.Headers)
 
-	// Real multipart placeholders are expanded by the host, not JS file I/O.
-	fileContext := newMultipartFileContext(t, "video", "fixture.mp4", "video/mp4", []byte("fixture-video"))
-	decoded, err := plugin.Engine.CallPath(context.Background(), "protocols", []string{"openai_video", "decodeRequest"},
+	// Inputs are Data URI JSON only; multipart file uploads are refused.
+	_, err = plugin.Engine.CallPath(context.Background(), "protocols", []string{"openai_video", "decodeRequest"},
 		map[string]any{"model": info.OriginModelName, "body": map[string]any{
-			"kind": "multipart", "fields": map[string]any{"prompt": []any{"Edit fixture"}, "duration": []any{"4"}},
+			"kind": "multipart", "fields": map[string]any{"prompt": []any{"Edit fixture"}},
 			"files": []any{map[string]any{"ref": "request_file:video", "field": "video", "size": 13, "mimeType": "video/mp4"}},
 		}})
-	require.NoError(t, err)
-	fileContext.Set("task_request", decoded.(map[string]any)["requestBody"])
-	fileAdaptor := New(plugin)
-	fileAdaptor.Init(info)
-	require.Nil(t, fileAdaptor.ValidateRequestAndSetAction(fileContext, info))
-	fileBody, err := fileAdaptor.BuildRequestBody(fileContext, info)
-	require.NoError(t, err)
-	var wire map[string]any
-	require.NoError(t, common.DecodeJson(fileBody, &wire))
-	parts := wire["input"].([]any)[0].(map[string]any)["content"].([]any)
-	assert.Equal(t, base64.StdEncoding.EncodeToString([]byte("fixture-video")), parts[0].(map[string]any)["data"])
+	require.Error(t, err)
 
 	for _, invalid := range []map[string]any{
 		{"prompt": "Fixture", "duration": 11}, {"prompt": "Fixture", "duration": 3, "seconds": 4},
@@ -250,26 +238,60 @@ func TestIndependentPluginCatalogueVertexOmniCapabilitiesAndExtensionUsage(t *te
 		data := append(atom("ftyp", []byte("isom0000")), atom("moov", append(atom("mvhd", mdhd), trak...))...)
 		return base64.StdEncoding.EncodeToString(data)
 	}
-	c := ctx(map[string]any{"prompt": "Extend fixture", "task": "extend", "duration": 6,
-		"video": "data:video/mp4;base64," + mp4(3)})
+	c := ctx(map[string]any{"prompt": "Extend fixture", "task": "extend", "video": "https://cdn.example.com/clip.mp4"})
+	preflight := call("buildPreflightRequest", c).(map[string]any)
+	assert.Equal(t, "https://assets.88api.ai/gcs/ingest", preflight["url"])
+	assert.NotContains(t, preflight["headers"], "Authorization")
+	assert.Equal(t, true, preflight["body"].(map[string]any)["measure"])
+	// The host stores the Worker's ingest answer and passes it to every submit hook.
+	c["preflightResponse"] = map[string]any{"status": 200, "body": map[string]any{"object": "gcs_ingest", "items": []any{
+		map[string]any{"url": "https://cdn.example.com/clip.mp4", "kind": "video", "mime_type": "video/mp4",
+			"uri": "gs://88api-omni-media/vertex-omni-inputs/2026-10-09/in.mp4", "facts": map[string]any{"seconds": 3, "resolution": "720p"}},
+	}}}
 	wire := call("buildSubmitRequest", c).(map[string]any)["body"].(map[string]any)
+	input := wire["input"].([]any)[0].(map[string]any)["content"].([]any)[0].(map[string]any)
+	assert.Equal(t, "gs://88api-omni-media/vertex-omni-inputs/2026-10-09/in.mp4", input["uri"])
 	format := wire["response_format"].([]any)[0].(map[string]any)
-	assert.Equal(t, map[string]any{"type": "video"}, format)
-	assert.EqualValues(t, 6, call("extractUsage", c).(map[string]any)["seconds"])
+	assert.Equal(t, map[string]any{"type": "video", "delivery": "uri",
+		"gcs_uri": "gs://88api-omni-media/vertex-omni/unassigned/"}, format)
+	assert.EqualValues(t, 11, call("extractUsage", c).(map[string]any)["seconds"], "reserve one ~10s segment")
 	response := map[string]any{"body": map[string]any{"id": "v1_extension", "status": "in_progress"}}
 	submitted := call("parseSubmitResponse", c, response).(map[string]any)
-	query := map[string]any{"taskId": "v1_extension", "action": "extend", "state": submitted["state"]}
+	state := submitted["state"].(map[string]any)
+	assert.Equal(t, true, state["bill_added_seconds"])
+	assert.EqualValues(t, 3, state["input_seconds"])
+	query := map[string]any{"taskId": "v1_extension", "action": "extend", "state": state}
+
+	// URI delivery: wait for a header-only Worker probe, then settle added seconds.
+	stored := "gs://88api-omni-media/vertex-omni/unassigned/out.mp4"
+	delivered := map[string]any{"id": "v1_extension", "status": "completed", "outputs": []any{
+		map[string]any{"type": "video", "mime_type": "video/mp4", "uri": stored}}}
+	waiting := call("parseTaskResult", query, delivered).(map[string]any)
+	assert.Equal(t, "IN_PROGRESS", waiting["status"])
+	probing := map[string]any{"taskId": "v1_extension", "action": "extend", "state": waiting["state"]}
+	probeRequest := call("buildQueryRequest", probing).(map[string]any)
+	assert.Equal(t, "https://assets.88api.ai/gcs/probe?id=v1_extension&uri="+url.QueryEscape(stored), probeRequest["url"])
+	assert.NotContains(t, probeRequest["headers"], "Authorization")
+	probe := map[string]any{"object": "gcs_probe", "id": "v1_extension", "status": "completed",
+		"outputs": []any{map[string]any{"type": "video", "mime_type": "video/mp4", "uri": stored}},
+		"facts":   map[string]any{"seconds": 13.032, "resolution": "720p"}}
+	probed := call("parseTaskResult", probing, probe).(map[string]any)
+	assert.Equal(t, "SUCCESS", probed["status"])
+	assert.InDelta(t, 10.032, call("extractUsageOnComplete", probing, probed, probe).(map[string]any)["seconds"], 1e-9,
+		"charge output minus input, not the full movie or the reserve")
+
+	// Inline output (legacy delivery) settles the same added-seconds contract.
 	data := map[string]any{"id": "v1_extension", "status": "completed", "outputs": []any{
 		map[string]any{"type": "video", "mime_type": "video/mp4", "data": mp4(9)},
 	}, "usage": map[string]any{"total_output_tokens": 99999}, "duration": 100}
 	result := call("parseTaskResult", query, data).(map[string]any)
 	assert.Equal(t, "SUCCESS", result["status"])
 	facts := call("extractUsageOnComplete", query, result, data).(map[string]any)
-	assert.EqualValues(t, 9, facts["seconds"], "charge full 9s output, not 6s requested or 6s added")
+	assert.EqualValues(t, 6, facts["seconds"], "charge 6s added, not 9s output or 11s reserve")
 	immediate := call("parseSubmitResponse", c, map[string]any{"body": data}).(map[string]any)
 	immediateFacts := call("extractUsageOnComplete", map[string]any{"action": "extend", "state": immediate["state"]},
 		immediate["immediate"], immediate["taskData"]).(map[string]any)
-	assert.EqualValues(t, 9, immediateFacts["seconds"])
+	assert.EqualValues(t, 6, immediateFacts["seconds"])
 	assert.NotContains(t, string(mustMarshalOmniTest(t, immediate["taskData"])), mp4(9))
 
 	// New continuations use output facts, while pre-upgrade snapshots retain
@@ -297,91 +319,4 @@ func mustMarshalOmniTest(t *testing.T, value any) []byte {
 	data, err := common.Marshal(value)
 	require.NoError(t, err)
 	return data
-}
-
-// Optional local acceptance uses the exact private captures recovered from
-// Google. CI runs the compact protocol tests; it must not upload user media.
-func TestIndependentPluginCatalogueVertexOmniCapturedSSE(t *testing.T) {
-	directory := os.Getenv("VERTEX_SSE_CAPTURE_DIR")
-	if directory == "" {
-		t.Skip("private captured SSE files are supplied only for local acceptance")
-	}
-	sourcePath := os.Getenv("VERTEX_PLUGIN_SOURCE")
-	if sourcePath == "" {
-		sourcePath = "../../../../../plugins/vertex-omni/plugin.js"
-	}
-	source, err := os.ReadFile(sourcePath)
-	require.NoError(t, err)
-	plugin, err := pluginruntime.NewRegistry().Register(string(source), pluginruntime.Options{})
-	require.NoError(t, err)
-	originalAuth := acquireAccessToken
-	acquireAccessToken = func(vertexcore.Credentials, string) (string, error) { return "fixture-oauth", nil }
-	t.Cleanup(func() { acquireAccessToken = originalAuth; pluginAuthCache = sync.Map{} })
-	key, err := common.Marshal(vertexcore.Credentials{ProjectID: "fixture-project", PrivateKey: "fixture-not-a-key"})
-	require.NoError(t, err)
-	entries, err := filepath.Glob(filepath.Join(directory, "*.sse.raw.txt"))
-	require.NoError(t, err)
-	require.Len(t, entries, 2)
-	for _, path := range entries {
-		t.Run(filepath.Base(path), func(t *testing.T) {
-			first, err := os.Open(path)
-			require.NoError(t, err)
-			scanner := bufio.NewScanner(first)
-			var interaction struct {
-				Interaction struct {
-					ID string `json:"id"`
-				} `json:"interaction"`
-			}
-			for scanner.Scan() {
-				if text, ok := strings.CutPrefix(scanner.Text(), "data:"); ok {
-					require.NoError(t, common.Unmarshal([]byte(strings.TrimSpace(text)), &interaction))
-					break
-				}
-			}
-			require.NoError(t, first.Close())
-			require.NotEmpty(t, interaction.Interaction.ID)
-			requests := 0
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				requests++
-				assert.Equal(t, http.MethodGet, r.Method)
-				assert.Equal(t, "true", r.URL.Query().Get("stream"))
-				assert.Equal(t, "text/event-stream", r.Header.Get("Accept"))
-				w.Header().Set("Content-Type", "text/event-stream")
-				file, err := os.Open(path)
-				require.NoError(t, err)
-				defer file.Close()
-				_, err = io.Copy(w, file)
-				require.NoError(t, err)
-			}))
-			defer server.Close()
-			info := &relaycommon.RelayInfo{OriginModelName: "vertex-omni-1.1-test",
-				ChannelMeta: &relaycommon.ChannelMeta{ChannelType: constant.ChannelTypeTaskPlugin,
-					ChannelBaseUrl: server.URL, ApiKey: string(key)}}
-			adaptor := New(plugin)
-			adaptor.Init(info)
-			task := &model.Task{TaskID: "task_local_capture", Action: "text_to_video",
-				Properties: model.Properties{OriginModelName: "vertex-omni-1.1-test"},
-				PrivateData: model.TaskPrivateData{UpstreamTaskID: interaction.Interaction.ID,
-					PluginState: []byte(`{"query_sse":true,"seconds":10,"resolution":"4k"}`)}}
-			resp, err := adaptor.FetchTask(server.URL, string(key), task, "")
-			require.NoError(t, err)
-			body, err := io.ReadAll(resp.Body)
-			require.NoError(t, err)
-			require.NoError(t, resp.Body.Close())
-			require.Equal(t, "application/json", resp.Header.Get("Content-Type"))
-			result, err := adaptor.ParseTaskResult(task, resp, body)
-			require.NoError(t, err)
-			require.Equal(t, "SUCCESS", result.Status)
-			data, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(result.Url, "data:video/mp4;base64,"))
-			require.NoError(t, err)
-			expected, err := os.ReadFile(strings.TrimSuffix(path, ".sse.raw.txt") + ".mp4")
-			require.NoError(t, err)
-			assert.Equal(t, sha256.Sum256(expected), sha256.Sum256(data))
-			assert.Empty(t, result.UsageFacts, "ordinary generation retains the original 10s contract")
-			var normalized map[string]any
-			require.NoError(t, common.Unmarshal(body, &normalized))
-			assert.NotContains(t, normalized, "steps", "private thought/input steps are not persisted")
-			assert.Equal(t, 1, requests, "replay never resubmits a generation")
-		})
-	}
 }
