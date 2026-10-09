@@ -183,6 +183,10 @@ test('submission and polling protect the task lifecycle and wait for the anonymo
   assert.throws(() => plugin.parseTaskResult({ taskId: 'a' }, { id: 'b', status: 'queued' }), /编号/)
   assert.deepEqual(plugin.parseTaskResult({}, { status: 'failed', error: { code: 'upstream_failed', message: '原始错误' } }),
     { status: 'FAILURE', progress: '100%', reason: 'upstream_failed: 原始错误' })
+  const leaked = plugin.parseTaskResult({}, { status: 'failed', error: { code: 'x', message: '下载失败 https://bucket.s3.example-cdn.com/v.mp4?sig=1 请联系 support.upstream-vendor.best' } })
+  assert.doesNotMatch(leaked.reason, /https?:|example-cdn|upstream-vendor/)
+  assert.match(leaked.reason, /下载失败/)
+  assert.equal(plugin.parseTaskResult({}, { status: 'failed', error: { message: 'https://only.example.com/x' } }).reason.includes('example'), false)
 
   const pending = { id: 'task_up', status: 'completed', url: 'https://example.invalid/v1/videos/task_up/content', content_url: '/v1/videos/task_up/content' }
   assert.deepEqual(plugin.parseTaskResult({ state: null }, pending), { status: 'IN_PROGRESS', progress: '99%', state: { linkWaitPolls: 1 } })
