@@ -55,7 +55,7 @@ export const meta = {
   key: "vertex-omni",
   name: "Vertex Video",
   icon: "VertexAI.Color",
-  version: "1.6.1",
+  version: "1.6.2",
   // HTTP(S) inputs are copied to GCS before submit; requires host preflight.
   requiredCapabilities: ["task-preflight@1"],
   author: { name: "88API", url: "https://github.com/blackdm666/88api-task-plugins" },
@@ -118,8 +118,10 @@ function sizeInfo(value) {
     "1280x720": ["720p", "16:9"], "720x1280": ["720p", "9:16"],
     "1920x1080": ["1080p", "16:9"], "1080x1920": ["1080p", "9:16"],
     "3840x2160": ["4k", "16:9"], "2160x3840": ["4k", "9:16"],
+    // Older documentation sent the ratio in size; it sets no resolution.
+    "16:9": [undefined, "16:9"], "9:16": [undefined, "9:16"],
   };
-  if (!Object.prototype.hasOwnProperty.call(sizes, value)) throw new Error("size 必须为 360p、720p、1080p 或 4k 的横屏/竖屏尺寸。");
+  if (!Object.prototype.hasOwnProperty.call(sizes, value)) throw new Error("size 必须为 16:9、9:16，或 360p、720p、1080p、4k 的横屏/竖屏尺寸（如 1280x720）。");
   return sizes[value];
 }
 function aspect(value) {
