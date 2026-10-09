@@ -19,8 +19,9 @@ const VEO_TASKS = ["text_to_video", "image_to_video", "reference_to_video", "ext
 const VEO_IMAGE_MIMES = ["image/jpeg", "image/png"];
 const VEO_REGION = "us-central1";
 const VEO_EXTEND_RESERVE_SECONDS = 8;
-// Isolated test names only: a public name here would pin all of its traffic
-// to plugin channels and bypass the production type-41 channels.
+// Public names are production since 1.5.0: declaring them pins all of their
+// traffic to channels bound to this plugin (type-41 channels no longer serve
+// them). The isolated test names stay available for QA channels.
 const MODELS = {
   "vertex-omni-1.1-test": { family: "omni", upstream: "gemini-omni-1.1-flash-preview", label: "Omni 1.1",
     resolutions: BILLED_RESOLUTIONS, upgrade360: true, tasks: TASKS, continuation: true },
@@ -30,6 +31,12 @@ const MODELS = {
   "vertex-veo-3.1-test": { family: "veo", upstream: "veo-3.1-generate-001", label: "Veo 3.1" },
   "vertex-veo-3.1-fast-test": { family: "veo", upstream: "veo-3.1-fast-generate-001", label: "Veo 3.1 Fast" },
 };
+Object.assign(MODELS, {
+  "veo-3.1": MODELS["vertex-veo-3.1-test"],
+  "veo-3.1-fast": MODELS["vertex-veo-3.1-fast-test"],
+  "gemini-omni-flash": MODELS["vertex-omni-flash-test"],
+  "gemini-omni-flash-1.1": MODELS["vertex-omni-1.1-test"],
+});
 function spec(model) {
   if (typeof model !== "string" || !Object.prototype.hasOwnProperty.call(MODELS, model)) {
     throw new Error("此版本仅接受独立测试模型 " + Object.keys(MODELS).join("、") + "。");
@@ -55,17 +62,17 @@ export const meta = {
   key: "vertex-omni",
   name: "Vertex Video",
   icon: "VertexAI.Color",
-  version: "1.4.0",
+  version: "1.5.0",
   // HTTP(S) inputs are copied to GCS before submit; requires host preflight.
   requiredCapabilities: ["task-preflight@1"],
   author: { name: "88API", url: "https://github.com/blackdm666/88api-task-plugins" },
   description: {
-    en: "Isolated Vertex Omni 1.1 / Omni Flash / Veo 3.1 video adapter with service-account authentication",
-    zh: "使用服务账号鉴权的隔离 Vertex 视频适配器（Omni 1.1、Omni Flash、Veo 3.1）",
+    en: "Vertex Omni 1.1 / Omni Flash / Veo 3.1 / Veo 3.1 Fast video adapter with service-account authentication and GCS delivery",
+    zh: "使用服务账号鉴权、GCS 交付的 Vertex 视频适配器（Omni 1.1、Omni Flash、Veo 3.1、Veo 3.1 Fast）",
   },
   baseUrl: "https://aiplatform.googleapis.com",
   allowedHosts: ["storage.googleapis.com", VEO_REGION + "-aiplatform.googleapis.com", WORKER_HOST],
-  // Never claim type 41 or a production-facing model name (see MODELS).
+  // Never claim type 41; public names route only to channels bound here.
   models: Object.keys(MODELS),
   fetchMode: "per_task",
   auth: { type: "oauth2_jwt" },
@@ -226,13 +233,42 @@ function mp4Facts(data) {
     return videoTracks.length === 1 ? videoTracks[0] : null;
   } catch (_) { return null; }
 }
-// Inputs are HTTP(S) URLs only. The Worker copies them into the media bucket
-// during preflight (SSRF-checked, size-bounded) and measures extension input.
-function media(value, type) {
+const IMAGE_LIMIT = 20 * 1024 * 1024;
+// Raw Base64 (no data: prefix) is accepted for images, as the old type-41
+// adaptor did; the format is recognised from its leading bytes.
+function sniffImage(value) {
+  if (value.startsWith("iVBORw0KGgo")) return "image/png";
+  if (value.startsWith("/9j/")) return "image/jpeg";
+  if (value.startsWith("UklGR") && value.slice(8, 16).startsWith("V0VCU")) return "image/webp";
+  return "";
+}
+// Videos are HTTP(S) URLs only: the Worker copies them into the media bucket
+// during preflight and measures extension input. Images additionally accept
+// Data URI, raw Base64 and multipart files, inlined to Google (<=20MiB) as
+// before 1.3.0, so existing clients keep working.
+function media(value, type, imageMimes) {
   const source = typeof value === "string" ? text(value) : "";
   if (source.length <= 4096 && /^https?:\/\/[^\s/@\\?#]+(?:[/?#][^\s\\]*)?$/i.test(source)) return { type, url: source };
-  throw new Error("素材仅接受 HTTP(S) URL，支持" +
-    (type === "image" ? "PNG/JPEG/WebP/HEIC/HEIF 图片（20MiB 内）。" : "MP4/MOV/WebM 视频（64MiB 内）。"));
+  if (type === "image") {
+    const mimes = imageMimes || IMAGE_MIMES;
+    const allowed = mime => {
+      if (!mimes.includes(mime)) throw new Error("图片类型 " + (mime || "未知") + " 不受支持，支持 " + mimes.join("、") + "。");
+      return mime;
+    };
+    if (object(value) && value.__fileRef !== undefined) {
+      if (!/^request_file:[^\x00-\x20]+$/.test(text(value.__fileRef))) throw new Error("上传图片的文件引用不正确。");
+      const mime = allowed(text(value.mimeType).toLowerCase());
+      return { type, mime_type: mime, data: { __fileRef: value.__fileRef, encoding: "base64", mimeType: mime, maxBytes: IMAGE_LIMIT } };
+    }
+    const match = /^data:([^;,]+);base64,([\s\S]*)$/.exec(source);
+    if (match) return { type, mime_type: allowed(match[1].toLowerCase()), data: base64(match[2], IMAGE_LIMIT) };
+    if (source.length >= 16 && !source.includes(":")) {
+      const mime = sniffImage(source);
+      if (mime) return { type, mime_type: allowed(mime), data: base64(source, IMAGE_LIMIT) };
+    }
+    throw new Error("图片支持 HTTP(S) 链接、Data URI（data:<MIME>;base64,...）、PNG/JPEG/WebP 的 Base64 或 multipart 文件（20MiB 内）。");
+  }
+  throw new Error("视频仅接受 HTTP(S) 链接，支持 MP4/MOV/WebM（64MiB 内）。");
 }
 function references(req, singular, plural, extra) {
   if (req[plural] !== undefined && !Array.isArray(req[plural])) throw new Error(plural + "必须为数组。");
@@ -290,14 +326,20 @@ function normalize(req, model) {
   }
   const seconds = requestedTask === "extend" ? EXTEND_RESERVE_SECONDS
     : consistent(durations, 3, value => number(value, "视频时长"), "视频时长");
-  const firstFrame = mediaAlias([req.first_frame, req.firstFrame, metadata.first_frame, metadata.firstFrame], "首帧");
+  let firstFrame = mediaAlias([req.first_frame, req.firstFrame, metadata.first_frame, metadata.firstFrame], "首帧");
   const lastFrame = mediaAlias([req.last_frame, req.lastFrame, metadata.last_frame, metadata.lastFrame], "尾帧");
   const images = references(req, "image", "images", req.input_reference);
   if (lastFrame !== undefined && firstFrame === undefined) throw new Error("尾帧需要同时提供首帧。");
   if ((firstFrame !== undefined || lastFrame !== undefined) && images.length) throw new Error("首尾帧字段不能与普通参考图片混用。");
+  const videos = references(req, "video", "videos");
+  // A single image without a task is the first frame (OpenAI input_reference
+  // semantics); two or more without a task remain references.
+  if (requestedTask === undefined && firstFrame === undefined && images.length === 1 && !videos.length &&
+      req.previous_interaction_id === undefined && metadata.previous_interaction_id === undefined) {
+    firstFrame = images.pop();
+  }
   if (firstFrame !== undefined) images.push(firstFrame);
   if (lastFrame !== undefined) images.push(lastFrame);
-  const videos = references(req, "video", "videos");
   const inputSeconds = optionalDecimal([
     req.input_duration, req.inputDuration, req.source_duration, req.sourceDuration,
     metadata.input_duration, metadata.inputDuration, metadata.video_duration, metadata.videoDuration,
@@ -403,8 +445,15 @@ function normalizeVeo(req, model, sp) {
   if (firstFrame !== undefined && images.length) throw new Error("首尾帧字段不能与普通参考图片混用。");
   // A single image without a task is the first frame (OpenAI input_reference
   // semantics); two or three are asset references, which Veo fixes at 8s.
-  const task = requestedTask || (videos.length ? "extend"
-    : firstFrame !== undefined || lastFrame !== undefined || images.length === 1 ? "image_to_video"
+  // Old type-41 clients select frames/reference with metadata.video_mode.
+  const mode = metadata.video_mode;
+  if (mode !== undefined && mode !== "frames" && mode !== "reference") throw new Error("metadata.video_mode 只支持 frames 或 reference。");
+  const modeTask = mode === "frames" ? "image_to_video" : mode === "reference" ? "reference_to_video" : undefined;
+  if (requestedTask !== undefined && modeTask !== undefined && requestedTask !== modeTask) throw new Error("task 与 metadata.video_mode 冲突。");
+  // Without a task: one image is the first frame, two are first+last frames,
+  // three are asset references (Veo fixes references at 8s).
+  const task = requestedTask || modeTask || (videos.length ? "extend"
+    : firstFrame !== undefined || lastFrame !== undefined || images.length === 1 || images.length === 2 ? "image_to_video"
       : images.length ? "reference_to_video" : "text_to_video");
   const durations = [req.duration, req.seconds, metadata.duration_seconds, metadata.durationSeconds];
   if (task === "extend" && durations.some(value => value !== undefined)) {
@@ -422,12 +471,12 @@ function normalizeVeo(req, model, sp) {
     const first = firstFrame !== undefined ? firstFrame : images[0];
     const last = lastFrame !== undefined ? lastFrame : images[1];
     if (first === undefined || images.length > (firstFrame !== undefined ? 0 : 2)) throw new Error("首尾帧生成必须提供 1 或 2 张图片。");
-    content.push(Object.assign(media(first, "image"), { role: "first_frame" }));
-    if (last !== undefined) content.push(Object.assign(media(last, "image"), { role: "last_frame" }));
+    content.push(Object.assign(media(first, "image", VEO_IMAGE_MIMES), { role: "first_frame" }));
+    if (last !== undefined) content.push(Object.assign(media(last, "image", VEO_IMAGE_MIMES), { role: "last_frame" }));
   } else if (task === "reference_to_video") {
     if (videos.length || firstFrame !== undefined || lastFrame !== undefined) throw new Error("参考图生成只接受 1 到 3 张参考图片。");
     if (images.length < 1 || images.length > 3) throw new Error(sp.label + " 参考图生成需要 1 到 3 张参考图片。");
-    for (const image of images) content.push(Object.assign(media(image, "image"), { role: "reference" }));
+    for (const image of images) content.push(Object.assign(media(image, "image", VEO_IMAGE_MIMES), { role: "reference" }));
   } else {
     if (videos.length !== 1 || images.length || firstFrame !== undefined || lastFrame !== undefined) {
       throw new Error("延长视频必须提供且只能提供 1 个视频，不能同时提供图片。");
@@ -594,7 +643,8 @@ function ingestedContent(ctx, req) {
 }
 function veoSubmit(ctx, req, conn) {
   const instance = { prompt: req.prompt };
-  const ref = part => ({ gcsUri: part.uri, mimeType: part.mime_type });
+  const ref = part => part.uri ? { gcsUri: part.uri, mimeType: part.mime_type }
+    : { bytesBase64Encoded: part.data, mimeType: part.mime_type };
   for (const part of ingestedContent(ctx, req).content) {
     if (part.role === "first_frame") instance.image = ref(part);
     else if (part.role === "last_frame") instance.lastFrame = ref(part);
@@ -919,7 +969,47 @@ export const protocols = {
       if (body.kind === "json") {
         if (!object(body.value)) throw new Error("请求体必须为 JSON 对象。");
         req = Object.assign({}, body.value);
-      } else throw new Error("请使用 JSON 提交，素材以 Data URI 内联（不接受 multipart 文件上传）。");
+      } else if (body.kind === "multipart") {
+        req = {};
+        for (const key of Object.keys(body.fields || {})) {
+          const values = body.fields[key];
+          if (!Array.isArray(values) || values.length !== 1) throw new Error("multipart 标量字段不可重复。");
+          req[key] = values[0];
+        }
+        for (const key of ["metadata", "images", "videos"]) {
+          if (req[key] !== undefined) {
+            try { req[key] = JSON.parse(req[key]); } catch (_) { throw new Error(key + "必须为有效 JSON。"); }
+          }
+        }
+        for (const key of ["duration", "seconds", "seed"]) {
+          if (typeof req[key] === "string" && /^\d+$/.test(req[key])) req[key] = Number(req[key]);
+        }
+        for (const key of ["generate_audio", "generateAudio"]) {
+          if (req[key] === "true" || req[key] === "false") req[key] = req[key] === "true";
+        }
+        // Image files only; videos must be HTTP(S) links.
+        for (const file of body.files || []) {
+          const frame = ["first_frame", "firstFrame", "last_frame", "lastFrame"].includes(file.field);
+          if (!frame && !["image", "images", "image[]", "images[]", "input_reference"].includes(file.field)) {
+            throw new Error("multipart 只接受图片文件（input_reference/image/images/first_frame/last_frame），视频请传 HTTP(S) 链接。");
+          }
+          if (!Number.isSafeInteger(file.size) || file.size < 1 || file.size > IMAGE_LIMIT) throw new Error("上传图片大小必须在 20MiB 内。");
+          // Clients often omit the part type or send octet-stream; fall back to the extension.
+          let mime = text(file.mimeType).split(";")[0].trim().toLowerCase();
+          if (!mime.startsWith("image/")) {
+            const ext = (/\.([a-z0-9]+)$/i.exec(text(file.filename)) || [])[1];
+            mime = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp" }[text(ext).toLowerCase()] || mime;
+          }
+          const reference = { __fileRef: file.ref, mimeType: mime };
+          if (frame) {
+            if (req[file.field] !== undefined) throw new Error("首尾帧文件字段不可重复。");
+            req[file.field] = reference;
+          } else {
+            if (req.images !== undefined && !Array.isArray(req.images)) throw new Error("images必须为数组。");
+            req.images = (req.images || []).concat([reference]);
+          }
+        }
+      } else throw new Error("请使用 JSON 或 multipart/form-data 提交。");
       const normalized = normalize(req, ctx.model);
       // Preserve original references for build/usage validation. Normalized
       // content is derived afresh, so no hidden passthrough can change billing.

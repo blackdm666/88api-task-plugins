@@ -69,17 +69,18 @@ function mp4(seconds, resolution = "720p", version = 0, movieSeconds = seconds) 
   ]).toString("base64");
 }
 
-test("QA manifest does not intercept production Vertex, Veo or Omni models", () => {
+test("manifest claims the four public names plus QA names, never type 41, upstream IDs or Lite", () => {
   assert.equal(plugin.meta.key, "vertex-omni");
-  assert.equal(plugin.meta.version, "1.4.0");
+  assert.equal(plugin.meta.version, "1.5.0");
   assert.deepEqual(plugin.meta.requiredCapabilities, ["task-preflight@1"], "no SSE host capability");
   assert.deepEqual(plugin.meta.allowedHosts, ["storage.googleapis.com", "us-central1-aiplatform.googleapis.com", "assets.88api.ai"]);
-  assert.deepEqual(plugin.meta.models, [model, flashModel, veoModel, veoFastModel]);
+  assert.deepEqual(plugin.meta.models, [model, flashModel, veoModel, veoFastModel,
+    "veo-3.1", "veo-3.1-fast", "gemini-omni-flash", "gemini-omni-flash-1.1"]);
   assert.equal(plugin.meta.channelTypes, undefined);
   assert.equal(plugin.meta.dynamicModels, undefined);
   assert.deepEqual(plugin.meta.auth, { type: "oauth2_jwt" });
-  for (const name of ["gemini-omni-flash", "gemini-omni-flash-1.1", upstream, "veo-3.1", "veo-3.1-fast",
-    "gemini-omni-flash-preview", "veo-3.1-generate-001", "veo-3.1-fast-generate-001", "veo-3.1-lite-generate-001"]) {
+  for (const name of [upstream, "gemini-omni-flash-preview", "veo-3.1-generate-001", "veo-3.1-fast-generate-001",
+    "veo-3.1-lite-generate-001", "veo-3.1-lite", "veo-3.0-generate-001"]) {
     assert.throws(() => plugin.protocols.openai_video.decodeRequest({
       model: name, body: { kind: "json", value: { prompt: "Fixture" } },
     }), /独立测试模型/);
@@ -135,21 +136,92 @@ test("invalid billing multipliers, conflicting aliases and hidden wire overrides
   }
 });
 
-test("inputs are HTTP(S) URLs only; Data URI, bucket, object and file references are rejected", () => {
+test("videos are HTTP(S) only; images also accept Data URI, raw Base64 and multipart files", () => {
   for (const url of [clip, "http://cdn.example.com/a.mp4", "https://cdn.example.com/a.mp4?sig=x&t=1",
     "https://cdn.example.com:8443/path/a%20b.mp4#frag"]) assert.equal(decode({ video: url }).action, "edit");
   for (const value of [
-    { video: "data:video/mp4;base64,dmlkZW8=" }, { image: "data:image/png;base64,aW1hZ2U=" },
+    { video: "data:video/mp4;base64,dmlkZW8=" }, { video: "dmlkZW8=" }, { video: { __fileRef: "request_file:video", mimeType: "video/mp4" } },
     { image: "gs://fixture-bucket/image.webp" }, { video: "ftp://cdn.example.com/a.mp4" },
     { image: "https://user:pass@cdn.example.com/a.png" }, { image: "https://cdn.example.com/a b.png" },
-    { image: "https:///a.png" }, { image: "https://cdn.example.com/" + "a".repeat(4100) },
-    { image: { uri: still } }, { image: { __fileRef: "request_file:image", mimeType: "image/png" } },
+    { image: "https:///a.png" }, { image: "https://cdn.example.com/" + "a".repeat(4100) }, { image: { uri: still } },
+    { image: { __fileRef: "malicious", mimeType: "image/png" } }, { image: "data:image/svg+xml;base64,eA==" },
+    { image: "data:image/png;base64,%%%" }, { image: "R0lGODlhAQABAIAAAP///wAAACw=" }, { image: "not base64 at all" },
     { images: "not-array" }, { videos: Array(4).fill(clip) }, { images: Array(11).fill(still) },
     { metadata: { previous_interaction_id: "../bad" } },
   ]) assert.throws(() => decode(value), undefined, JSON.stringify(value).slice(0, 80));
-  assert.throws(() => decode({ video: "data:video/mp4;base64,dmlkZW8=" }), /HTTP\(S\) URL/);
-  assert.throws(() => plugin.protocols.openai_video.decodeRequest({ model, body: { kind: "multipart",
-    fields: { prompt: ["Fixture"] }, files: [{ ref: "request_file:video", field: "video", size: 4, mimeType: "video/mp4" }] } }), /JSON/);
+  assert.throws(() => decode({ video: "data:video/mp4;base64,dmlkZW8=" }), /视频仅接受 HTTP\(S\) 链接/);
+  assert.throws(() => decode({ image: "data:image/gif;base64,R0lGODlh" }), /image\/gif 不受支持/);
+  const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGBgAAAABQABpfZFQAAAAABJRU5ErkJggg==";
+  assert.deepEqual(plugin.buildPreflightRequest(driver({ images: ["data:image/jpeg;base64,/9j/4AAQ", png, still] })).body.items,
+    [{ url: still, kind: "image" }], "only links are ingested");
+  assert.throws(() => plugin.buildSubmitRequest(driver({ images: ["data:image/jpeg;base64,/9j/4AAQ", png, still] })), /未返回有效结果/);
+  const ok = plugin.buildSubmitRequest(ingested(driver({ images: ["data:image/jpeg;base64,/9j/4AAQ", png, still] })));
+  assert.deepEqual(ok.body.input[0].content.slice(0, 3), [
+    { type: "image", mime_type: "image/jpeg", data: "/9j/4AAQ" },
+    { type: "image", mime_type: "image/png", data: png },
+    { type: "image", mime_type: "image/png", uri: "gs://" + bucket + "/vertex-omni-inputs/2026-10-09/0.png" },
+  ]);
+  assert.equal(plugin.buildPreflightRequest(driver({ image: png })), null, "inline images need no preflight");
+  assert.throws(() => decode({ metadata: { output_gcs_uri: "gs://fixture-bucket/out/" } }), /由插件管理/);
+});
+
+test("multipart accepts image files (inlined by the host) and rejects video files", () => {
+  const body = { kind: "multipart", fields: { prompt: ["Fixture"], seconds: ["6"], metadata: ['{"resolution":"1080p"}'] },
+    files: [{ ref: "request_file:input_reference", field: "input_reference", size: 4, mimeType: "image/png" }] };
+  const decoded = plugin.protocols.openai_video.decodeRequest({ model: veoModel, body });
+  assert.equal(decoded.action, "image_to_video");
+  const request = plugin.buildSubmitRequest({ ...driver({}, veoModel, veoModel), requestBody: decoded.requestBody });
+  assert.deepEqual(request.body.instances[0].image, { bytesBase64Encoded: { __fileRef: "request_file:input_reference",
+    encoding: "base64", mimeType: "image/png", maxBytes: 20 * 1024 * 1024 }, mimeType: "image/png" });
+  assert.equal(request.body.parameters.durationSeconds, 6);
+  assert.equal(request.body.parameters.resolution, "1080p");
+  const omni = plugin.protocols.openai_video.decodeRequest({ model, body: { ...body, fields: { prompt: ["Fixture"] } } });
+  assert.equal(omni.action, "image_to_video", "a single uploaded image is the first frame");
+  const sniffed = plugin.protocols.openai_video.decodeRequest({ model: veoModel, body: { ...body,
+    files: [{ ref: "request_file:images[]", field: "images[]", filename: "a.JPG", size: 4, mimeType: "application/octet-stream" }] } });
+  assert.deepEqual(sniffed.requestBody.images, [{ __fileRef: "request_file:images[]", mimeType: "image/jpeg" }]);
+  for (const invalid of [
+    { ...body, files: [{ ref: "request_file:video", field: "video", size: 4, mimeType: "video/mp4" }] },
+    { ...body, files: [{ ref: "request_file:image", field: "image", filename: "a.bin", size: 4, mimeType: "" }] },
+    { ...body, files: [{ ref: "request_file:image", field: "image", size: 20 * 1024 * 1024 + 1, mimeType: "image/png" }] },
+    { ...body, fields: { ...body.fields, seconds: ["4", "6"] } }, { ...body, fields: { ...body.fields, metadata: ["not-json"] } },
+  ]) assert.throws(() => plugin.protocols.openai_video.decodeRequest({ model: veoModel, body: invalid }));
+  assert.throws(() => plugin.protocols.openai_video.decodeRequest({ model: veoModel, body: { ...body,
+    files: [{ ref: "request_file:image", field: "image", size: 4, mimeType: "image/webp" }] } }), /image\/webp 不受支持/);
+});
+
+test("old type-41 request shapes keep their meaning on the public names", () => {
+  // Omni: one image without a task is the first frame; several are references.
+  const single = plugin.buildSubmitRequest(ingested(driver({ image: still }, "gemini-omni-flash", "gemini-omni-flash")));
+  assert.equal(single.body.generation_config.video_config.task, "image_to_video");
+  assert.match(single.body.input[0].content.at(-1).text, /Use the image as the first frame\.$/);
+  assert.equal(plugin.buildSubmitRequest(ingested(driver({ images: [still, still] }, "gemini-omni-flash-1.1",
+    "gemini-omni-flash-1.1"))).body.generation_config.video_config.task, "reference_to_video");
+  assert.equal(plugin.buildSubmitRequest(ingested(driver({ image: still, task: "reference_to_video" }))).body
+    .generation_config.video_config.task, "reference_to_video", "explicit task wins");
+  // Veo: metadata.video_mode, and two images default to first+last frames.
+  const frames = plugin.buildSubmitRequest(ingested(driver({ images: [still, "https://cdn.example.com/b.jpg"], duration: 4 },
+    "veo-3.1-fast", "veo-3.1-fast")));
+  assert.equal(frames.action, "image_to_video");
+  assert.ok(frames.body.instances[0].image && frames.body.instances[0].lastFrame);
+  const refs = plugin.buildSubmitRequest(ingested(driver({ images: [still, still], metadata: { video_mode: "reference" } },
+    "veo-3.1", "veo-3.1")));
+  assert.equal(refs.action, "reference_to_video");
+  assert.equal(refs.body.instances[0].referenceImages.length, 2);
+  assert.throws(() => decode({ images: [still], metadata: { video_mode: "story" } }, "veo-3.1"), /frames 或 reference/);
+  assert.throws(() => decode({ images: [still], task: "text_to_video", metadata: { video_mode: "frames" } }, "veo-3.1"), /冲突/);
+  const b64 = plugin.buildSubmitRequest(driver({ image: "data:image/jpeg;base64,/9j/4AAQ" }, "veo-3.1", "veo-3.1"));
+  assert.deepEqual(b64.body.instances[0].image, { bytesBase64Encoded: "/9j/4AAQ", mimeType: "image/jpeg" });
+  assert.throws(() => decode({ image: "data:image/webp;base64,UklGRiQAAABXRUJQ" }, "veo-3.1"), /image\/webp 不受支持/);
+  // Public names share the QA specs, prices and upstreams.
+  for (const [name, upstreamName] of [["veo-3.1", "veo-3.1-generate-001"], ["veo-3.1-fast", "veo-3.1-fast-generate-001"]]) {
+    assert.match(plugin.buildSubmitRequest(driver({}, name, name)).url, new RegExp(upstreamName + ":predictLongRunning$"));
+    assert.match(plugin.buildSubmitRequest(driver({}, name, upstreamName)).url, new RegExp(upstreamName + ":predictLongRunning$"));
+  }
+  assert.equal(plugin.buildSubmitRequest(driver({}, "gemini-omni-flash", "gemini-omni-flash")).body.model, "gemini-omni-flash-preview");
+  assert.equal(plugin.buildSubmitRequest(driver({ resolution: "4k" }, "gemini-omni-flash-1.1", "gemini-omni-flash-1.1")).body.model,
+    "gemini-omni-1.1-flash-preview");
+  assert.throws(() => decode({ resolution: "1080p" }, "gemini-omni-flash"), /仅支持 720p/);
 });
 
 test("preflight ingests every URL in content order; the channel token is never a header", () => {
@@ -537,13 +609,13 @@ test("Veo first/last frame, references and extension map onto Veo instance field
 test("Veo requests are bounded to what Google accepts", () => {
   for (const [value, message] of [
     [{ duration: 5 }, /4、6 或 8/], [{ duration: 10 }, /4、6 或 8/], [{ resolution: "360p" }, /720p、1080p 或 4k/],
-    [{ images: [still, still], duration: 4 }, /只支持 8 秒/], [{ images: [still, still, still, still] }, /1 到 3/],
+    [{ images: [still, still, still], duration: 4 }, /只支持 8 秒/], [{ images: [still, still, still, still] }, /1 到 3/],
     [{ task: "extend", video: clip, duration: 8 }, /固定新增 7 秒/], [{ task: "extend", video: clip, resolution: "1080p" }, /延长沿用/],
     [{ task: "extend", video: clip, size: "1280x720" }, /延长沿用/], [{ task: "edit", video: clip }, /只支持/],
     [{ task: "text_to_video", image: still }, /不能同时/], [{ generate_audio: "false" }, /true 或 false/],
     [{ seed: -1 }, /seed/], [{ temperature: 0.5 }, /不支持 temperature/], [{ previous_interaction_id: "v1_x" }, /不支持 previous/],
     [{ audio: "https://cdn.example.com/a.mp3" }, /音频/], [{ parameters: {} }, /由插件管理/], [{ n: 2 }, /单个视频/],
-    [{ video: "data:video/mp4;base64,AAAA", task: "extend" }, /HTTP\(S\) URL/],
+    [{ video: "data:video/mp4;base64,AAAA", task: "extend" }, /HTTP\(S\) 链接/],
   ]) assert.throws(() => decode(value, veoModel), message, JSON.stringify(value));
   assert.throws(() => plugin.buildSubmitRequest(ingested(driver({ image: "https://cdn.example.com/a.webp" }, veoModel, veoModel),
     undefined, items => items.map(item => ({ ...item, mime_type: "image/webp" })))), /image\/jpeg、image\/png/);

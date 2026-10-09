@@ -46,12 +46,14 @@ func TestIndependentPluginCatalogueVertexOmniHTTP(t *testing.T) {
 		require.True(t, ok)
 		assert.Same(t, factory, endpoint.Plugin)
 	}
-	for _, name := range []string{"veo-3.1", "veo-3.1-fast", "gemini-omni-flash", "gemini-omni-flash-1.1", "gemini-omni-1.1-flash-preview",
-		"gemini-omni-flash-preview", "veo-3.1-generate-001", "veo-3.1-fast-generate-001"} {
+	// Upstream IDs and Lite stay unclaimed; 1.5.0 claims the four public names.
+	for _, name := range []string{"gemini-omni-1.1-flash-preview", "gemini-omni-flash-preview", "veo-3.1-generate-001",
+		"veo-3.1-fast-generate-001", "veo-3.1-lite-generate-001"} {
 		_, ok = generation.LookupEndpoint("POST", "/v1/videos", name)
-		assert.False(t, ok)
+		assert.False(t, ok, name)
 	}
-	for _, name := range []string{"vertex-omni-1.1-test", "vertex-omni-flash-test", "vertex-veo-3.1-test", "vertex-veo-3.1-fast-test"} {
+	for _, name := range []string{"vertex-omni-1.1-test", "vertex-omni-flash-test", "vertex-veo-3.1-test", "vertex-veo-3.1-fast-test",
+		"veo-3.1", "veo-3.1-fast", "gemini-omni-flash", "gemini-omni-flash-1.1"} {
 		endpoint, ok := generation.LookupEndpoint("POST", "/v1/videos", name)
 		require.True(t, ok, name)
 		assert.Same(t, plugin, endpoint.Plugin, name)
@@ -423,4 +425,46 @@ func TestIndependentPluginCatalogueVertexVeoHTTP(t *testing.T) {
 	}
 	assert.Equal(t, 1, submits, "polling must never start a new billable operation")
 	assert.Equal(t, 2, polls)
+}
+
+// 1.5.0 serves the public names with the old type-41 image forms: a multipart
+// image file is inlined by the host as Base64 and two images mean first+last.
+func TestIndependentPluginCatalogueVertexVeoMultipartImage(t *testing.T) {
+	source, err := os.ReadFile("../../../../../plugins/vertex-omni/plugin.js")
+	require.NoError(t, err)
+	plugin, err := pluginruntime.NewRegistry().Register(string(source), pluginruntime.Options{})
+	require.NoError(t, err)
+	originalAuth := acquireAccessToken
+	pluginAuthCache = sync.Map{}
+	acquireAccessToken = func(vertexcore.Credentials, string) (string, error) { return "fixture-oauth", nil }
+	t.Cleanup(func() { acquireAccessToken = originalAuth; pluginAuthCache = sync.Map{} })
+	key, err := common.Marshal(vertexcore.Credentials{ProjectID: "fixture-project", PrivateKey: "fixture-not-a-key"})
+	require.NoError(t, err)
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "veo-3.1",
+		ChannelMeta: &relaycommon.ChannelMeta{ChannelType: constant.ChannelTypeTaskPlugin,
+			ChannelBaseUrl: "https://provider.example", ApiKey: string(key), UpstreamModelName: "veo-3.1"},
+		TaskRelayInfo: &relaycommon.TaskRelayInfo{PublicTaskID: "task_publicveomultipart"},
+	}
+	adaptor := New(plugin)
+	adaptor.Init(info)
+	c := newMultipartFileContext(t, "input_reference", "first.png", "image/png", []byte("first-frame"))
+	c.Set("task_request", map[string]any{"prompt": "Fixture", "duration": 8, "images": []any{
+		map[string]any{"__fileRef": "request_file:input_reference", "mimeType": "image/png"},
+		"data:image/jpeg;base64,/9j/4AAQ"}})
+	require.Nil(t, adaptor.ValidateRequestAndSetAction(c, info))
+	assert.Equal(t, "image_to_video", info.Action)
+	body, err := adaptor.BuildRequestBody(c, info)
+	require.NoError(t, err)
+	requestBytes, err := io.ReadAll(body)
+	require.NoError(t, err)
+	var decoded map[string]any
+	require.NoError(t, common.Unmarshal(requestBytes, &decoded))
+	instance := decoded["instances"].([]any)[0].(map[string]any)
+	assert.Equal(t, map[string]any{"bytesBase64Encoded": base64.StdEncoding.EncodeToString([]byte("first-frame")),
+		"mimeType": "image/png"}, instance["image"])
+	assert.Equal(t, map[string]any{"bytesBase64Encoded": "/9j/4AAQ", "mimeType": "image/jpeg"}, instance["lastFrame"])
+	requestURL, err := adaptor.BuildRequestURL(info)
+	require.NoError(t, err)
+	assert.True(t, strings.HasSuffix(requestURL, "/models/veo-3.1-generate-001:predictLongRunning"), requestURL)
 }
