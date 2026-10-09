@@ -39,28 +39,27 @@ Minimax-H3 与 XM-Video 的初始独立版本与当时88API镜像和生产自定
 
 ## Vertex Video（key `vertex-omni`）
 
-`vertex-omni@1.5.0` 是独立的 Vertex 视频插件，显示名为 Vertex Video。它不覆盖
+`vertex-omni@1.6.0` 是独立的 Vertex 视频插件，显示名为 Vertex Video。它不覆盖
 `vertex-ai`，不声明渠道类型 41，也不启用动态模型接管。
 插件 key 保持 `vertex-omni` 不变，以免已有渠道绑定和历史任务失联。
 
-1.5.0 起插件**接管四个正式模型名**，同时保留隔离测试名（两者共用同一套规格、
-上游型号和计价）。插件一旦声明某个模型名，该名字的全部新流量都固定到绑定本插件的
-Task Plugin 渠道（类型 63）；类型 41 的 Go 适配器不再处理这些名字的新任务，
-已提交的旧任务仍按原平台轮询。
+插件声明下表四个正式模型名。插件一旦声明某个模型名，该名字的全部新流量都固定到绑定本插件的
+Task Plugin 渠道（类型 63），已完全取代类型 41 的 Go 适配器；历史任务的成品仍从 R2 读取。
+1.6.0 删除了 1.4.0–1.5.0 的隔离测试名（`vertex-omni-1.1-test` 等），这些名字现在会被拒绝。
 
-| 正式名 | 测试名 | 上游型号 | 接口 | 分辨率 | 时长 | 任务 |
-|---|---|---|---|---|---|---|
-| `gemini-omni-flash-1.1` | `vertex-omni-1.1-test` | `gemini-omni-1.1-flash-preview` | Interactions（global） | 720p/1080p/4k | 3–10s，延长每次+10s（720p/1080p） | 文生、首尾帧、参考、编辑、延长、多轮 |
-| `gemini-omni-flash` | `vertex-omni-flash-test` | `gemini-omni-flash-preview` | Interactions（global） | **仅 720p** | 3–10s | 文生、首尾帧、参考 |
-| `veo-3.1` | `vertex-veo-3.1-test` | `veo-3.1-generate-001` | predictLongRunning（us-central1） | 720p/1080p/4k | 4/6/8s，延长每次+7s | 文生、首帧/首尾帧、参考图（1–3 张，仅 8s）、延长 |
-| `veo-3.1-fast` | `vertex-veo-3.1-fast-test` | `veo-3.1-fast-generate-001` | predictLongRunning（us-central1） | 720p/1080p/4k | 同上 | 同上 |
+| 模型名 | 上游型号 | 接口 | 分辨率 | 时长 | 任务 |
+|---|---|---|---|---|---|
+| `gemini-omni-flash-1.1` | `gemini-omni-1.1-flash-preview` | Interactions（global） | 720p/1080p/4k | 3–10s，延长每次+10s（720p/1080p） | 文生、首尾帧、参考、编辑、延长、多轮 |
+| `gemini-omni-flash` | `gemini-omni-flash-preview` | Interactions（global） | **仅 720p** | 3–10s | 文生、首尾帧、参考 |
+| `veo-3.1` | `veo-3.1-generate-001` | predictLongRunning（us-central1） | 720p/1080p/4k | 4/6/8s，延长每次+7s | 文生、首帧/首尾帧、参考图（1–3 张，仅 8s）、延长 |
+| `veo-3.1-fast` | `veo-3.1-fast-generate-001` | predictLongRunning（us-central1） | 720p/1080p/4k | 同上 | 同上 |
 
 - 渠道 `model_mapping` 只能映射到同一行的上游型号。上游型号名、Veo 3.1 Lite 都不由插件声明。
 - **360p 不上架**：Omni 请求 360p（含 `640x360` 等尺寸）时，按 720p 生成并按 720p 计费；
   计费枚举 `resolution` 只有 720p/1080p/4k。其他不支持的分辨率（例如 Flash 的 1080p/4k）
   在插件里直接拒绝，计价表达式也不为它们分档。
 - 插件只适用于单独绑定它的 Task Plugin 渠道，不支持 New API 中继渠道。
-- 1.3.0 起声明 `task-preflight@1`（不再声明 `query-sse-delta@1`）。1.5.0 已在锁定宿主
+- 1.3.0 起声明 `task-preflight@1`（不再声明 `query-sse-delta@1`）。1.5.0/1.6.0 已在锁定宿主
   `1debc5f3` 和生产宿主 `f5f882e` 上运行回归。
 
 ### 1.5.0：正式名迁移与旧请求格式兼容
@@ -245,7 +244,7 @@ Task Plugin 渠道（类型 63）；类型 41 的 Go 适配器不再处理这些
 
 ```json
 {
-  "model": "vertex-omni-1.1-test",
+  "model": "gemini-omni-flash-1.1",
   "prompt": "A red balloon floats through a quiet room.",
   "duration": 3,
   "size": "1280x720"

@@ -46,14 +46,15 @@ func TestIndependentPluginCatalogueVertexOmniHTTP(t *testing.T) {
 		require.True(t, ok)
 		assert.Same(t, factory, endpoint.Plugin)
 	}
-	// Upstream IDs and Lite stay unclaimed; 1.5.0 claims the four public names.
+	// Upstream IDs, Lite and the retired test names stay unclaimed; the four
+	// public names are the plugin's whole catalogue.
 	for _, name := range []string{"gemini-omni-1.1-flash-preview", "gemini-omni-flash-preview", "veo-3.1-generate-001",
-		"veo-3.1-fast-generate-001", "veo-3.1-lite-generate-001"} {
+		"veo-3.1-fast-generate-001", "veo-3.1-lite-generate-001", "vertex-omni-1.1-test", "vertex-omni-flash-test",
+		"vertex-veo-3.1-test", "vertex-veo-3.1-fast-test"} {
 		_, ok = generation.LookupEndpoint("POST", "/v1/videos", name)
 		assert.False(t, ok, name)
 	}
-	for _, name := range []string{"vertex-omni-1.1-test", "vertex-omni-flash-test", "vertex-veo-3.1-test", "vertex-veo-3.1-fast-test",
-		"veo-3.1", "veo-3.1-fast", "gemini-omni-flash", "gemini-omni-flash-1.1"} {
+	for _, name := range []string{"veo-3.1", "veo-3.1-fast", "gemini-omni-flash", "gemini-omni-flash-1.1"} {
 		endpoint, ok := generation.LookupEndpoint("POST", "/v1/videos", name)
 		require.True(t, ok, name)
 		assert.Same(t, plugin, endpoint.Plugin, name)
@@ -113,7 +114,7 @@ func TestIndependentPluginCatalogueVertexOmniHTTP(t *testing.T) {
 	}))
 	defer server.Close()
 	info := &relaycommon.RelayInfo{
-		OriginModelName: "vertex-omni-1.1-test",
+		OriginModelName: "gemini-omni-flash-1.1",
 		ChannelMeta: &relaycommon.ChannelMeta{ChannelType: constant.ChannelTypeTaskPlugin,
 			ChannelBaseUrl: server.URL, ApiKey: string(key), UpstreamModelName: "gemini-omni-1.1-flash-preview"},
 		TaskRelayInfo: &relaycommon.TaskRelayInfo{PublicTaskID: "task_publicfixture"},
@@ -210,7 +211,7 @@ func TestIndependentPluginCatalogueVertexOmniCapabilitiesAndExtensionUsage(t *te
 		return value
 	}
 	ctx := func(body map[string]any) map[string]any {
-		return map[string]any{"model": "vertex-omni-1.1-test", "requestBody": body,
+		return map[string]any{"model": "gemini-omni-flash-1.1", "requestBody": body,
 			"upstreamModel": "gemini-omni-1.1-flash-preview", "baseUrl": "https://aiplatform.googleapis.com",
 			"authHeader": "Bearer fixture", "auth": map[string]any{"projectId": "fixture-project"}}
 	}
@@ -381,7 +382,7 @@ func TestIndependentPluginCatalogueVertexVeoHTTP(t *testing.T) {
 	}))
 	defer server.Close()
 	info := &relaycommon.RelayInfo{
-		OriginModelName: "vertex-veo-3.1-fast-test",
+		OriginModelName: "veo-3.1-fast",
 		ChannelMeta: &relaycommon.ChannelMeta{ChannelType: constant.ChannelTypeTaskPlugin,
 			ChannelBaseUrl: server.URL, ApiKey: string(key), UpstreamModelName: "veo-3.1-fast-generate-001"},
 		TaskRelayInfo: &relaycommon.TaskRelayInfo{PublicTaskID: "task_publicveofixture"},
