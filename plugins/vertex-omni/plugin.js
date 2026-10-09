@@ -6,22 +6,38 @@ const UPSTREAM_MODEL = "gemini-omni-1.1-flash-preview";
 const IMAGE_MIMES = ["image/png", "image/jpeg", "image/webp", "image/heic", "image/heif"];
 const VIDEO_MIMES = ["video/mp4", "video/quicktime", "video/webm"];
 const RESOLUTIONS = ["360p", "720p", "1080p", "4k"];
+// Verified 2026-10-09: extension rejects 4k after minutes of upstream work.
+const EXTEND_RESOLUTIONS = ["720p", "1080p"];
 const TASKS = ["text_to_video", "image_to_video", "reference_to_video", "edit", "extend"];
+// Inputs and results live in one central media bucket, never inline Base64:
+// Google accepts only gs:// input URIs ("Only GCS URIs are supported").
+// Each channel project's Vertex service agent and service account are granted
+// objectCreator+objectViewer on it (Google reads/writes as the service agent).
+const MEDIA_BUCKET = "88api-omni-media";
+// The transfer Worker copies HTTP(S) inputs into the bucket (preflight) and
+// reads only MP4 headers of stored results (probe).
+const WORKER_HOST = "assets.88api.ai";
+const INGEST_URL = "https://" + WORKER_HOST + "/gcs/ingest";
+const PROBE_URL = "https://" + WORKER_HOST + "/gcs/probe";
+// One extension adds ~10s (10.005–10.032s verified); reserve, then settle.
+const EXTEND_RESERVE_SECONDS = 11;
+const EXTEND_MAX_INPUT_SECONDS = 30.1;
 
 export const meta = {
   apiVersion: 1,
   key: "vertex-omni",
   name: "Vertex Omni",
   icon: "VertexAI.Color",
-  version: "1.2.0",
-  requiredCapabilities: ["query-sse-delta@1"],
+  version: "1.3.0",
+  // HTTP(S) inputs are copied to GCS before submit; requires host preflight.
+  requiredCapabilities: ["task-preflight@1"],
   author: { name: "88API", url: "https://github.com/blackdm666/88api-task-plugins" },
   description: {
     en: "Isolated Omni 1.1 video adapter with service-account authentication",
     zh: "使用服务账号鉴权的隔离 Omni 1.1 视频适配器",
   },
   baseUrl: "https://aiplatform.googleapis.com",
-  allowedHosts: ["storage.googleapis.com"],
+  allowedHosts: ["storage.googleapis.com", WORKER_HOST],
   // Never claim type 41, Veo, old Omni, or a production-facing model name.
   models: [TEST_MODEL],
   fetchMode: "per_task",
@@ -83,11 +99,6 @@ function gcs(value) {
   const match = /^gs:\/\/([a-z0-9][a-z0-9._-]{1,220}[a-z0-9])\/([^\x00-\x20\\?#]+)$/.exec(text(value));
   if (!match || match[2] === "." || match[2] === "..") throw new Error("请提供有效的 gs://bucket/object 地址。");
   return { bucket: match[1], name: match[2] };
-}
-function mimeFromURI(uri) {
-  const extension = uri.split(".").pop().toLowerCase();
-  return { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", webp: "image/webp",
-    heic: "image/heic", heif: "image/heif", mp4: "video/mp4", mov: "video/quicktime", webm: "video/webm" }[extension] || "";
 }
 function base64(value, limit) {
   const padding = value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0;
@@ -183,36 +194,13 @@ function mp4Facts(data) {
     return videoTracks.length === 1 ? videoTracks[0] : null;
   } catch (_) { return null; }
 }
+// Inputs are HTTP(S) URLs only. The Worker copies them into the media bucket
+// during preflight (SSRF-checked, size-bounded) and measures extension input.
 function media(value, type) {
-  const mimes = type === "image" ? IMAGE_MIMES : VIDEO_MIMES;
-  const limit = (type === "image" ? 20 : 64) * 1024 * 1024;
-  if (object(value) && value.__fileRef) {
-    const mime = text(value.mimeType).toLowerCase();
-    if (!mimes.includes(mime) || !/^request_file:[^\x00-\x20]+$/.test(text(value.__fileRef))) {
-      throw new Error("上传素材的类型或文件引用不正确。");
-    }
-    const result = { type, mime_type: mime, data: {
-      __fileRef: value.__fileRef, encoding: "base64", mimeType: mime, maxBytes: limit,
-    } };
-    return result;
-  }
-  const source = typeof value === "string" ? text(value) : object(value) ? text(value.uri) : "";
-  if (source.startsWith("gs://")) {
-    gcs(source);
-    const mime = object(value) ? text(value.mime_type).toLowerCase() : mimeFromURI(source);
-    if (!mimes.includes(mime)) throw new Error("Cloud Storage 素材需要有效的 MIME 类型或文件扩展名。");
-    const result = { type, mime_type: mime, uri: source };
-    return result;
-  }
-  const match = /^data:([^;,]+);base64,([\s\S]*)$/.exec(source);
-  if (match && mimes.includes(match[1].toLowerCase())) {
-    const result = { type, mime_type: match[1].toLowerCase(), data: base64(match[2], limit) };
-    return result;
-  }
-  if (/^https?:\/\//i.test(source)) {
-    throw new Error("隔离版本不下载 HTTP(S) 输入素材，请改用 Data URI、multipart 文件或 gs:// 地址。");
-  }
-  throw new Error("素材格式不正确，请使用受支持 MIME 类型的 Data URI、multipart 文件或 gs:// 地址。");
+  const source = typeof value === "string" ? text(value) : "";
+  if (source.length <= 4096 && /^https?:\/\/[^\s/@\\?#]+(?:[/?#][^\s\\]*)?$/i.test(source)) return { type, url: source };
+  throw new Error("素材仅接受 HTTP(S) URL，支持" +
+    (type === "image" ? "PNG/JPEG/WebP/HEIC/HEIF 图片（20MiB 内）。" : "MP4/MOV/WebM 视频（64MiB 内）。"));
 }
 function references(req, singular, plural, extra) {
   if (req[plural] !== undefined && !Array.isArray(req[plural])) throw new Error(plural + "必须为数组。");
@@ -263,8 +251,13 @@ function normalize(req, model) {
   if (!prompt) throw new Error("请输入视频提示词。");
   const requestedTask = field([req.task, req.task_type, metadata.task, metadata.task_type],
     undefined, task, "task");
-  const seconds = consistent([req.duration, req.seconds, metadata.duration_seconds, metadata.durationSeconds],
-    requestedTask === "extend" ? 40 : 3, value => number(value, "视频时长"), "视频时长");
+  const durations = [req.duration, req.seconds, metadata.duration_seconds, metadata.durationSeconds];
+  // Google rejects an extension duration and always adds one ~10s segment.
+  if (requestedTask === "extend" && durations.some(value => value !== undefined)) {
+    throw new Error("延长每次由上游固定新增约 10 秒，不支持 duration/seconds，请移除。");
+  }
+  const seconds = requestedTask === "extend" ? EXTEND_RESERVE_SECONDS
+    : consistent(durations, 3, value => number(value, "视频时长"), "视频时长");
   const firstFrame = mediaAlias([req.first_frame, req.firstFrame, metadata.first_frame, metadata.firstFrame], "首帧");
   const lastFrame = mediaAlias([req.last_frame, req.lastFrame, metadata.last_frame, metadata.lastFrame], "尾帧");
   const images = references(req, "image", "images", req.input_reference);
@@ -285,11 +278,7 @@ function normalize(req, model) {
     : (firstFrame !== undefined || lastFrame !== undefined ? "image_to_video"
       : images.length ? "reference_to_video" : "text_to_video"));
   if (inferredTask === "extend") {
-    if (seconds < 3 || seconds > 40) throw new Error("延长视频的总时长必须为 3 到 40 秒之间的整数。");
     if (videos.length !== 1) throw new Error("延长视频必须提供且只能提供 1 个参考视频。");
-    if (inputSeconds !== undefined && seconds <= inputSeconds) {
-      throw new Error("延长视频的总时长必须大于输入视频时长。");
-    }
   } else {
     if (seconds < 3 || seconds > 10) throw new Error("视频时长必须为 3 到 10 秒之间的整数。");
   }
@@ -317,8 +306,9 @@ function normalize(req, model) {
       [req.aspect_ratio, req.ratio, metadata.aspect_ratio, metadata.aspectRatio, req.size].some(v => v !== undefined)) {
     throw new Error("视频编辑或延长沿用输入画面比例，请移除 aspect_ratio、ratio 和 size。");
   }
-  if (inferredTask === "extend" && explicitResolution) {
-    throw new Error("延长视频沿用输入分辨率，请移除 resolution 或 output。");
+  // Extension does not inherit the source resolution: unset outputs 720p.
+  if (inferredTask === "extend" && !EXTEND_RESOLUTIONS.includes(resolution)) {
+    throw new Error("延长视频仅支持 720p 或 1080p 输出（上游不支持 4K 延长），未指定时为 720p。");
   }
   for (const count of [req.n, req.sample_count, metadata.sampleCount, metadata.candidate_count]) {
     if (count !== undefined && number(count, "视频数量") !== 1) throw new Error("隔离版本仅支持单个视频结果。");
@@ -340,31 +330,19 @@ function normalize(req, model) {
     throw new Error("视频编辑或延长不能同时提供参考图片。");
   }
   const content = videos.map(value => media(value, "video")).concat(images.map(value => media(value, "image")));
-  let measuredInput;
-  if (inferredTask === "extend" && typeof content[0].data === "string") {
-    measuredInput = mp4Facts(content[0].data);
-    if (!measuredInput) throw new Error("延长输入必须是可测量时长的非分片 MP4。");
-    if (measuredInput.seconds < 1 || measuredInput.seconds > 30.1) throw new Error("延长输入视频时长必须在 1 到 30 秒之间。");
-    if (inputSeconds !== undefined && Math.abs(inputSeconds - measuredInput.seconds) > 0.1) throw new Error("输入视频时长与 MP4 不一致。");
-  }
   const framePrompt = firstFrame !== undefined
     ? (lastFrame !== undefined ? " Use the first image as the first frame and the second image as the last frame."
       : " Use the image as the first frame.") : "";
   content.push({ type: "text", text: prompt + framePrompt });
   const previous = field([req.previous_interaction_id, metadata.previous_interaction_id], undefined, id, "Interaction 编号");
-  const output = metadata.output_gcs_uri;
   if (previous !== undefined) id(previous);
   if (previous !== undefined && (requestedTask !== undefined || firstFrame !== undefined || lastFrame !== undefined)) {
     throw new Error("多轮请求不能同时指定 task 或首尾帧模式，请沿用上一轮上下文。");
   }
-  if (output !== undefined) gcs(output);
-  if ((inferredTask === "extend" || previous !== undefined) && output !== undefined) {
-    throw new Error("延长或多轮任务需返回内联 MP4 用于完整时长结算，请移除 output_gcs_uri。");
-  }
-  return { model, prompt, duration: seconds, input_duration: measuredInput ? measuredInput.seconds : inputSeconds, task: inferredTask,
+  if (metadata.output_gcs_uri !== undefined) throw new Error("输出位置由插件管理，请移除 metadata.output_gcs_uri。");
+  return { model, prompt, duration: seconds, input_duration: inputSeconds, task: inferredTask,
     aspect_ratio: ratio, resolution, explicit_resolution: explicitResolution, temperature, top_p: topP, content,
-    previous_interaction_id: previous, output_gcs_uri: output,
-    action: inferredTask };
+    previous_interaction_id: previous, action: inferredTask };
 }
 function connection(ctx) {
   if (ctx.authError || (ctx.upstream && ctx.upstream.kind === "new_api")) {
@@ -379,36 +357,94 @@ function connection(ctx) {
   root = root.replace(/\/+$/, "").replace(/\/(?:v1|v1beta1)$/, "");
   if (!/^https?:\/\/[A-Za-z0-9.[\]:-]+$/.test(root)) throw new Error("渠道 Base URL 必须是无凭据、无查询参数的服务根地址。");
   return {
+    project,
     url: root + "/v1beta1/projects/" + project + "/locations/global/interactions",
     headers: { Authorization: authorization, "Content-Type": "application/json", Accept: "application/json",
       "x-goog-user-project": project },
   };
+}
+// The transfer Worker can read the bucket; results are then copied to R2.
+function outputPrefix(publicTaskId) {
+  const task = /^task_[A-Za-z0-9_-]{8,191}$/.test(text(publicTaskId)) ? text(publicTaskId) : "unassigned";
+  return "gs://" + MEDIA_BUCKET + "/vertex-omni/" + task + "/";
+}
+export function buildPreflightRequest(ctx) {
+  const req = normalize(ctx.requestBody, ctx.model);
+  const items = req.content.filter(part => part.url);
+  if (!items.length) return null;
+  const conn = connection(ctx);
+  // The channel token travels in the JSON body (not a logged header) to the
+  // Worker, which uses it only against the allowlisted bucket on Google; IAM
+  // write permission on that bucket is therefore the ingest authorization.
+  return { url: INGEST_URL, method: "POST",
+    headers: { "Content-Type": "application/json", Accept: "application/json" },
+    body: { authorization: conn.headers.Authorization, bucket: MEDIA_BUCKET,
+      measure: req.task === "extend", items: items.map(part => ({ url: part.url, kind: part.type })) } };
+}
+// Replace URL placeholders with the preflight's gs:// copies, in order, and
+// return the measured extension input. Anything inconsistent fails before
+// Google is called, so nothing is billed.
+function ingestedContent(ctx, req) {
+  const wanted = req.content.filter(part => part.url);
+  if (!wanted.length) return { content: req.content };
+  const preflight = object(ctx.preflightResponse) ? ctx.preflightResponse : {};
+  const body = object(preflight.body) ? preflight.body : {};
+  if (body.object !== "gcs_ingest") throw new Error("素材转存服务未返回有效结果，请稍后重试。");
+  if (body.error !== undefined) throw new Error("素材转存失败：" + (errors(body) || "未知错误"));
+  if (!Array.isArray(body.items) || body.items.length !== wanted.length) throw new Error("素材转存结果数量不一致，请重试。");
+  let index = 0, measured;
+  const content = req.content.map(part => {
+    if (!part.url) return part;
+    const item = body.items[index++];
+    const mimes = part.type === "image" ? IMAGE_MIMES : VIDEO_MIMES;
+    if (!object(item) || item.url !== part.url || item.kind !== part.type || !mimes.includes(text(item.mime_type)) ||
+        gcs(item.uri).bucket !== MEDIA_BUCKET) {
+      throw new Error("素材转存结果与请求不一致，请重试。");
+    }
+    if (part.type === "video" && item.facts !== undefined) measured = item.facts;
+    return { type: part.type, mime_type: text(item.mime_type), uri: item.uri };
+  });
+  if (req.task === "extend") {
+    // Settlement is output minus this measured input, so it must be exact.
+    const facts = object(measured) ? measured : {};
+    if (typeof facts.seconds !== "number" || !Number.isFinite(facts.seconds)) {
+      throw new Error("延长输入必须是可测量时长的非分片 MP4。");
+    }
+    if (facts.seconds < 1 || facts.seconds > EXTEND_MAX_INPUT_SECONDS) {
+      throw new Error("延长输入视频时长必须在 1 到 30 秒之间；更长的视频请截取末尾片段（建议 10 秒）再延长。");
+    }
+    if (req.input_duration !== undefined && Math.abs(req.input_duration - facts.seconds) > 0.1) {
+      throw new Error("输入视频时长与 MP4 不一致。");
+    }
+    return { content, input_seconds: Math.round(facts.seconds * 1000) / 1000 };
+  }
+  return { content };
 }
 export function buildSubmitRequest(ctx) {
   const model = text(ctx.upstreamModel) || UPSTREAM_MODEL;
   if (model !== TEST_MODEL && model !== UPSTREAM_MODEL) throw new Error("测试渠道只能映射到 Omni 1.1 的精确上游型号。");
   // Revalidate original inputs rather than trusting a supplied normalized object.
   const req = normalize(ctx.requestBody, ctx.model);
+  const conn = connection(ctx);
   const format = { type: "video" };
   // Google REST response_format duration includes its seconds unit ("3s").
   // Keep ordinary generation's request billing numeric and unchanged.
   if (!["edit", "extend"].includes(req.task)) format.duration = String(req.duration) + "s";
-  // Google rejects aspect_ratio on edit/extend. For those tasks the source
-  // video determines the framing. Extension duration is not a verified
-  // final-duration control: reserve an estimate, then measure the output.
+  // Google rejects aspect_ratio and duration on edit/extend; the source video
+  // determines framing and an extension always adds one fixed segment.
   if (!["edit", "extend"].includes(req.task)) {
     Object.assign(format, { aspect_ratio: req.aspect_ratio, resolution: req.resolution });
   }
   // The published edit example uses "output", but the real service rejects it
   // as an unknown parameter. Use the response_format resolution field.
-  if (req.task === "edit" && req.explicit_resolution) format.resolution = req.resolution;
-  if (req.output_gcs_uri) Object.assign(format, { delivery: "uri", gcs_uri: req.output_gcs_uri });
+  if (["edit", "extend"].includes(req.task) && req.explicit_resolution) format.resolution = req.resolution;
+  // The JSON view omits large inline videos (verified 10s 4k); URI delivery
+  // keeps every resolution and length out of NewAPI memory.
+  Object.assign(format, { delivery: "uri", gcs_uri: outputPrefix(ctx.publicTaskId) });
   const body = {
     model: UPSTREAM_MODEL,
-    input: [{ type: "user_input", content: req.content }],
+    input: [{ type: "user_input", content: ingestedContent(ctx, req).content }],
     response_format: [format],
-    // Keep submit small: the host's JSON submit reader is limited to 1 MiB.
-    // Large inline video results are read on polling and archived by the host.
     background: true, store: true, stream: false,
   };
   // The real service forbids previous_interaction_id together with an
@@ -418,7 +454,6 @@ export function buildSubmitRequest(ctx) {
   if (req.top_p !== undefined) generation.top_p = req.top_p;
   if (Object.keys(generation).length) body.generation_config = generation;
   if (req.previous_interaction_id) body.previous_interaction_id = req.previous_interaction_id;
-  const conn = connection(ctx);
   return { url: conn.url, method: "POST", headers: conn.headers, body, action: req.action };
 }
 function errors(body) {
@@ -463,11 +498,49 @@ function billsOutputDuration(ctx) {
   return ctx.action === "extend" || (ctx.state || {}).task === "extend" ||
     (ctx.state || {}).bill_output_duration === true;
 }
+// 1.3.0 extensions settle only the newly generated segment, which is what
+// Google meters (identical output tokens for 10→20, 20→30 and 30→40s).
+// Older extension snapshots keep their full-output contract.
+function settledSeconds(state, outputSeconds) {
+  if (state.bill_added_seconds !== true) return outputSeconds;
+  const input = state.input_seconds;
+  if (typeof input !== "number" || !Number.isFinite(input) || input <= 0) {
+    throw new Error("延长输入时长缺失，无法按新增秒数结算。");
+  }
+  const added = Math.round((outputSeconds - input) * 1000) / 1000;
+  if (!(added > 0)) throw new Error("延长成品未比输入更长，无法按新增秒数结算。");
+  return added;
+}
+// Probe answers come from the transfer Worker, not Google: the interaction's
+// output projection plus header-only MP4 facts. No bytes, tokens or hints.
+function probeFacts(body, expectedURI) {
+  if (body.error !== undefined) return { invalid: "成品时长探测暂不可用：" + (errors(body) || "未知错误") };
+  const result = video(body);
+  if (!result || result.uri !== expectedURI) return { invalid: "成品探测结果与输出地址不一致。" };
+  const facts = object(body.facts) ? body.facts : {};
+  if (typeof facts.seconds !== "number" || !Number.isFinite(facts.seconds) || facts.seconds <= 0 ||
+      facts.seconds > 41 || !RESOLUTIONS.includes(facts.resolution)) {
+    return { invalid: "成品的完整 MP4 时长或分辨率无法核验。" };
+  }
+  return { seconds: Math.round(facts.seconds * 1000) / 1000, resolution: facts.resolution };
+}
+function probeResult(ctx, body) {
+  const state = ctx.state || {};
+  if (!text(state.probe_uri)) return { status: "UNKNOWN", reason: "收到未请求的成品探测结果。" };
+  // A probe outage is not a generation failure: keep polling, never refund.
+  const facts = probeFacts(body, state.probe_uri);
+  if (facts.invalid) return { status: "UNKNOWN", reason: facts.invalid };
+  try { settledSeconds(state, facts.seconds); } catch (error) { return { status: "UNKNOWN", reason: error.message }; }
+  const result = video(body);
+  return { status: "SUCCESS", progress: "100%", url: result.url, remoteUrl: result.url,
+    state: Object.assign({}, state, { output_seconds: facts.seconds, output_resolution: facts.resolution }) };
+}
 export function parseTaskResult(ctx, body) {
   if (!object(body)) return { status: "UNKNOWN", reason: "无法识别 Interaction 响应。" };
   if (body.id !== undefined && ctx.taskId && body.id !== ctx.taskId) {
     return { status: "UNKNOWN", reason: "Interaction 编号与已提交任务不一致。" };
   }
+  if (body.object === "gcs_probe") return probeResult(ctx, body);
   const reason = errors(body);
   if (reason) return { status: "FAILURE", progress: "100%", reason };
   const status = text(body.status);
@@ -482,19 +555,21 @@ export function parseTaskResult(ctx, body) {
     return { status: "FAILURE", progress: "100%", reason: "Interaction 视频地址格式不安全或不受支持。" };
   }
   if (!result) {
-    if (!(ctx.state || {}).query_sse) {
-      // Google can omit large videos from the JSON retrieval view while SSE
-      // retains them. Request a readonly replay, never another generation.
-      return { status: "IN_PROGRESS", progress: "90%",
-        state: Object.assign({}, ctx.state || {}, { query_sse: true }) };
-    }
-    return { status: "UNKNOWN", reason: "Interaction 已完成但SSE尚未返回可读取的视频。" };
+    // URI delivery always names the object. Only pre-1.3.0 inline snapshots
+    // can lose a large video from the JSON view; that was already a failure.
+    return { status: "FAILURE", progress: "100%", reason: "Interaction 已完成但未返回可读取的视频。" };
   }
   if (billsOutputDuration(ctx)) {
+    const state = ctx.state || {};
+    if (result.uri && result.uri.startsWith("gs://")) {
+      // Measure the stored MP4 header before settlement; never bill estimates.
+      return { status: "IN_PROGRESS", progress: "95%", state: Object.assign({}, state, { probe_uri: result.uri }) };
+    }
     const facts = result.data && mp4Facts(result.data);
     if (!facts) return { status: "UNKNOWN", reason: "成品的完整 MP4 时长无法核验，不能按预估时长完成结算。" };
+    try { settledSeconds(state, facts.seconds); } catch (error) { return { status: "UNKNOWN", reason: error.message }; }
     return { status: "SUCCESS", progress: "100%", url: result.url, remoteUrl: result.url,
-      state: Object.assign({}, ctx.state || {}, { output_seconds: facts.seconds, output_resolution: facts.resolution }) };
+      state: Object.assign({}, state, { output_seconds: facts.seconds, output_resolution: facts.resolution }) };
   }
   return { status: "SUCCESS", progress: "100%", url: result.url, remoteUrl: result.url };
 }
@@ -506,7 +581,9 @@ export function parseSubmitResponse(ctx, response) {
   if (response.statusCode >= 400) throw new Error("视频服务返回 HTTP " + response.statusCode + "，请核查是否已受理，勿重复提交。");
   const taskId = id(body.id);
   const req = normalize(ctx.requestBody, ctx.model);
-  const outputBillingState = req.previous_interaction_id ? { bill_output_duration: true } : {};
+  const inputSeconds = req.task === "extend" ? ingestedContent(ctx, req).input_seconds : undefined;
+  const outputBillingState = req.previous_interaction_id ? { bill_output_duration: true }
+    : req.task === "extend" ? { bill_added_seconds: true, input_seconds: inputSeconds } : {};
   const parsed = parseTaskResult({ taskId, action: req.task, state: outputBillingState }, body);
   if (parsed.status === "UNKNOWN") throw new Error(parsed.reason + " 请核查已受理任务，勿重复提交。");
   // Persist a compact projection only, never echoed inputs, thoughts or bytes.
@@ -520,7 +597,7 @@ export function parseSubmitResponse(ctx, response) {
   if (req.previous_interaction_id) Object.assign(state, {
     bill_output_duration: true, requested_seconds: req.duration,
   });
-  if (req.input_duration !== undefined) state.input_seconds = req.input_duration;
+  if (req.task === "extend") Object.assign(state, { input_seconds: inputSeconds, bill_added_seconds: true });
   if (req.task !== "text_to_video") state.task = req.task;
   if (parsed.state) Object.assign(state, parsed.state);
   const output = { taskId, taskData, state };
@@ -528,124 +605,45 @@ export function parseSubmitResponse(ctx, response) {
   return output;
 }
 export function buildQueryRequest(ctx) {
+  const state = ctx.state || {};
+  if (text(state.probe_uri)) {
+    // Header-only measurement by the transfer Worker with its own read-only
+    // bucket credential. Google OAuth is never sent outside Google.
+    gcs(state.probe_uri);
+    return { url: PROBE_URL + "?id=" + encodeURIComponent(id(ctx.taskId)) + "&uri=" + encodeURIComponent(state.probe_uri),
+      method: "GET", headers: { Accept: "application/json" } };
+  }
   const conn = connection(ctx);
-  if ((ctx.state || {}).query_sse) {
-    return { url: conn.url + "/" + id(ctx.taskId) + "?stream=true&include_input=false",
-      method: "GET", headers: Object.assign({}, conn.headers, { Accept: "text/event-stream" }),
-      responseType: "sse" };
-  }
   return { url: conn.url + "/" + id(ctx.taskId), method: "GET", headers: conn.headers };
-}
-// Host-decoded events and host-owned JSON deltas keep huge accumulated media
-// out of the small control state returned to the JS sandbox on each event.
-export function parseQueryEventDelta(ctx, event, previousState) {
-  const expected = id(ctx.taskId);
-  const body = event.body;
-  if (!object(body)) throw new Error("SSE查询尚未包含完整的终态事件。");
-  const kind = text(body.event_type) || text(event.event);
-  const prior = object(previousState) ? previousState : {};
-  const state = Object.assign({ started: false, steps: {}, outputs: 0, last_event_id: "" }, prior,
-    { steps: Object.assign({}, prior.steps || {}) });
-  const changes = [];
-  const eventID = text(body.event_id);
-  if (eventID && eventID === state.last_event_id) return { changes, state, done: false };
-  if (eventID.length > 1024) throw new Error("SSE事件编号过长。");
-  if (eventID) state.last_event_id = eventID;
-  if (body.interaction_id !== undefined && body.interaction_id !== expected) {
-    throw new Error("SSE Interaction编号不匹配。");
-  }
-  if (kind === "interaction.created") {
-    const interaction = body.interaction;
-    if (!object(interaction) || interaction.id !== expected || state.started) {
-      throw new Error("SSE查询开始事件无效或编号不匹配。");
-    }
-    if (interaction.model !== undefined && interaction.model !== UPSTREAM_MODEL) {
-      throw new Error("SSE返回了非预期模型。");
-    }
-    state.started = true;
-    changes.push({ op: "set", path: [], value: { id: expected, status: "in_progress", outputs: [] } });
-  } else {
-    if (!state.started) throw new Error("SSE查询缺少开始事件。");
-    if (kind === "step.start") {
-      const index = number(body.index, "SSE步骤编号");
-      if (index > 1023 || state.steps[String(index)] || !object(body.step)) throw new Error("SSE步骤无效。");
-      state.steps[String(index)] = { type: text(body.step.type), stopped: false, slot: -1 };
-    } else if (kind === "step.delta") {
-      const index = number(body.index, "SSE步骤编号");
-      const step = state.steps[String(index)];
-      if (!step || step.stopped || !object(body.delta)) throw new Error("SSE内容缺少有效步骤。");
-      if (step.type === "model_output" && body.delta.type === "video") {
-        const delta = body.delta;
-        const mime = text(delta.mime_type) || text(step.mime) || "video/mp4";
-        if (!VIDEO_MIMES.includes(mime) || (step.mime && step.mime !== mime)) throw new Error("SSE视频MIME不一致。");
-        const data = delta.data;
-        const uri = delta.uri;
-        if ((data !== undefined && typeof data !== "string") ||
-            (uri !== undefined && typeof uri !== "string")) throw new Error("SSE视频内容格式不正确。");
-        if (data && (uri || step.has_uri) || uri && step.has_data) throw new Error("SSE视频交付方式冲突。");
-        const next = Object.assign({}, step, { mime });
-        if (next.slot < 0) {
-          if (state.outputs !== 0) throw new Error("隔离版本仅支持一个SSE视频结果。");
-          next.slot = state.outputs++;
-          changes.push({ op: "append", path: ["outputs"], value: { type: "video", mime_type: mime, data: "" } });
-        }
-        if (data) {
-          next.has_data = true;
-          changes.push({ op: "appendText", path: ["outputs", next.slot, "data"], value: data });
-        }
-        if (uri) {
-          next.has_uri = true;
-          changes.push({ op: "set", path: ["outputs", next.slot, "uri"], value: uri });
-        }
-        state.steps[String(index)] = next;
-      }
-      // Do not accumulate user inputs, thought summaries or signatures.
-    } else if (kind === "step.stop") {
-      const index = number(body.index, "SSE步骤编号");
-      const step = state.steps[String(index)];
-      if (!step || step.stopped) throw new Error("SSE步骤结束事件无效。");
-      state.steps[String(index)] = Object.assign({}, step, { stopped: true });
-    } else if (kind === "interaction.completed" || kind === "interaction.failed") {
-      const interaction = body.interaction;
-      if (!object(interaction) || interaction.id !== expected) throw new Error("SSE终态编号不匹配。");
-      const status = text(interaction.status);
-      if (!["completed", "failed", "cancelled", "incomplete", "budget_exceeded", "requires_action"].includes(status)) {
-        throw new Error("SSE结束事件并非终态。");
-      }
-      if (Object.values(state.steps).some(step => step.type === "model_output" && !step.stopped)) {
-        throw new Error("SSE视频步骤尚未结束。");
-      }
-      changes.push({ op: "set", path: ["status"], value: status });
-      if (object(interaction.usage)) changes.push({ op: "set", path: ["usage"], value: interaction.usage });
-      if (interaction.error !== undefined) changes.push({ op: "set", path: ["error"], value: interaction.error });
-      if (Array.isArray(interaction.errors)) changes.push({ op: "set", path: ["errors"], value: interaction.errors });
-      return { changes, state, done: true };
-    }
-  }
-  return { changes, state, done: false };
 }
 export function extractUsage(ctx) {
   const req = normalize(ctx.requestBody, ctx.model);
   // A continuation can return a concatenated video longer than the requested
-  // new segment. Reserve the existing bounded estimate, then settle the full
-  // returned MP4, without changing the requested duration sent to Google.
+  // new segment: reserve 40s, then settle the full returned MP4. An extension
+  // reserves one segment, then settles measured output minus measured input.
   return { seconds: req.previous_interaction_id ? 40 : req.duration, resolution: req.resolution };
 }
 export function extractUsageOnComplete(ctx, result, data) {
   if (!billsOutputDuration(ctx)) return null;
   if (result.status !== "SUCCESS") return null;
-  const output = object(data) ? video(data) : null;
-  const facts = output && output.data ? mp4Facts(output.data) : null;
-  // Immediate completion stores a measured projection after the byte body is
-  // deliberately omitted from taskData. This state is plugin-owned, not a
-  // client hint or a token-to-duration conversion.
+  // Polling passes the pre-poll state, so facts come from this response:
+  // a Worker probe, or a legacy inline MP4. Immediate completion stores a
+  // measured projection in state. Never a client hint or token conversion.
   const state = ctx.state || {};
-  if (facts) return { seconds: facts.seconds, resolution: facts.resolution };
-  if (Number.isFinite(state.output_seconds) && state.output_seconds > 0 && state.output_seconds <= 41 &&
-      RESOLUTIONS.includes(state.output_resolution)) {
-    return { seconds: state.output_seconds, resolution: state.output_resolution };
+  let facts = null;
+  if (object(data) && data.object === "gcs_probe") {
+    const probed = probeFacts(data, state.probe_uri);
+    if (!probed.invalid) facts = probed;
+  } else {
+    const output = object(data) ? video(data) : null;
+    facts = output && output.data ? mp4Facts(output.data) : null;
   }
-  throw new Error("成品完整时长尚未核验。");
+  if (!facts && Number.isFinite(state.output_seconds) && state.output_seconds > 0 && state.output_seconds <= 41 &&
+      RESOLUTIONS.includes(state.output_resolution)) {
+    facts = { seconds: state.output_seconds, resolution: state.output_resolution };
+  }
+  if (!facts) throw new Error("成品完整时长尚未核验。");
+  return { seconds: settledSeconds(state, facts.seconds), resolution: facts.resolution };
 }
 export function listArtifacts(ctx) {
   const result = object(ctx.data) ? video(ctx.data) : null;
@@ -668,37 +666,7 @@ export const protocols = {
       if (body.kind === "json") {
         if (!object(body.value)) throw new Error("请求体必须为 JSON 对象。");
         req = Object.assign({}, body.value);
-      } else if (body.kind === "multipart") {
-        req = {};
-        for (const key of Object.keys(body.fields || {})) {
-          const values = body.fields[key];
-          if (!Array.isArray(values) || values.length !== 1) throw new Error("multipart 标量字段不可重复。");
-          req[key] = values[0];
-        }
-        for (const key of ["metadata", "images", "videos"]) {
-          if (req[key] !== undefined) {
-            try { req[key] = JSON.parse(req[key]); } catch (_) { throw new Error(key + "必须为有效 JSON。"); }
-          }
-        }
-        for (const file of body.files || []) {
-          const frame = ["first_frame", "firstFrame", "last_frame", "lastFrame"].includes(file.field);
-          const type = frame || ["image", "images", "input_reference"].includes(file.field) ? "image"
-            : ["video", "videos"].includes(file.field) ? "video" : "";
-          if (!type) throw new Error("不支持该上传文件字段。");
-          const limit = (type === "image" ? 20 : 64) * 1024 * 1024;
-          if (!Number.isSafeInteger(file.size) || file.size < 1 || file.size > limit) throw new Error("上传素材大小不正确。");
-          const reference = { __fileRef: file.ref, encoding: "base64", mimeType: file.mimeType, maxBytes: limit };
-          if (frame) {
-            if (req[file.field] !== undefined) throw new Error("首尾帧文件字段不可重复。");
-            req[file.field] = reference;
-            continue;
-          }
-          const key = type + "s";
-          if (req[key] !== undefined && !Array.isArray(req[key])) throw new Error(key + "必须为数组。");
-          if (!req[key]) req[key] = [];
-          req[key].push(reference);
-        }
-      } else throw new Error("请使用 JSON 或 multipart/form-data 提交。");
+      } else throw new Error("请使用 JSON 提交，素材以 Data URI 内联（不接受 multipart 文件上传）。");
       const normalized = normalize(req, ctx.model);
       // Preserve original references for build/usage validation. Normalized
       // content is derived afresh, so no hidden passthrough can change billing.

@@ -4,6 +4,12 @@ import * as plugin from "../plugins/vertex-omni/plugin.js";
 
 const model = "vertex-omni-1.1-test";
 const upstream = "gemini-omni-1.1-flash-preview";
+const bucket = "88api-omni-media";
+const outputPrefix = "gs://" + bucket + "/vertex-omni/task_fixture01/";
+const delivery = { delivery: "uri", gcs_uri: outputPrefix };
+const stored = outputPrefix + "123.mp4";
+const clip = "https://cdn.example.com/clip.mp4";
+const still = "https://cdn.example.com/still.png";
 function decode(value = {}) {
   return plugin.protocols.openai_video.decodeRequest({
     model, body: { kind: "json", value: { prompt: "Fixture", ...value } },
@@ -11,8 +17,24 @@ function decode(value = {}) {
 }
 function driver(value = {}) {
   return { model, upstreamModel: upstream, baseUrl: "https://aiplatform.googleapis.com",
-    authHeader: "Bearer fixture-token", auth: { projectId: "fixture-project" },
+    authHeader: "Bearer fixture-token", auth: { projectId: "fixture-project" }, publicTaskId: "task_fixture01",
     requestBody: decode(value).requestBody };
+}
+// Simulate the Worker's preflight answer for exactly what the plugin asked.
+function ingested(ctx, facts = { seconds: 10, resolution: "720p" }, edit = items => items) {
+  const preflight = plugin.buildPreflightRequest(ctx);
+  assert.ok(preflight, "media requests always preflight");
+  const items = preflight.body.items.map((item, index) => ({
+    url: item.url, kind: item.kind, size: 1234,
+    uri: "gs://" + bucket + "/vertex-omni-inputs/2026-10-09/" + index + (item.kind === "video" ? ".mp4" : ".png"),
+    mime_type: item.kind === "video" ? "video/mp4" : "image/png",
+    ...(item.kind === "video" && preflight.body.measure && facts !== null ? { facts } : {}),
+  }));
+  return { ...ctx, preflightResponse: { status: 200, body: { object: "gcs_ingest", items: edit(items) } } };
+}
+function probe(facts = { seconds: 20.032, resolution: "720p" }, uri = stored) {
+  return { object: "gcs_probe", id: "v1_fixture", status: "completed",
+    outputs: [{ type: "video", mime_type: "video/mp4", uri }], facts };
 }
 function completed(part = { type: "video", mime_type: "video/mp4", data: "dmlkZW8=" }) {
   return { id: "v1_fixture", status: "completed", steps: [{ type: "model_output", content: [part] }] };
@@ -46,8 +68,9 @@ function mp4(seconds, resolution = "720p", version = 0, movieSeconds = seconds) 
 
 test("QA manifest does not intercept production Vertex, Veo or Omni models", () => {
   assert.equal(plugin.meta.key, "vertex-omni");
-  assert.equal(plugin.meta.version, "1.2.0");
-  assert.deepEqual(plugin.meta.requiredCapabilities, ["query-sse-delta@1"]);
+  assert.equal(plugin.meta.version, "1.3.0");
+  assert.deepEqual(plugin.meta.requiredCapabilities, ["task-preflight@1"], "no SSE host capability");
+  assert.deepEqual(plugin.meta.allowedHosts, ["storage.googleapis.com", "assets.88api.ai"]);
   assert.deepEqual(plugin.meta.models, [model]);
   assert.equal(plugin.meta.channelTypes, undefined);
   assert.equal(plugin.meta.dynamicModels, undefined);
@@ -63,6 +86,7 @@ test("bounded usage and Interactions wire agree, including all supported duratio
   for (const value of [{ duration: 3 }, { seconds: "10" }, { metadata: { duration_seconds: 4 } },
     { metadata: { durationSeconds: 6 } }]) {
     const ctx = driver({ ...value, size: "720x1280" });
+    assert.equal(plugin.buildPreflightRequest(ctx), null, "text-only requests skip the ingest preflight");
     const request = plugin.buildSubmitRequest(ctx);
     assert.equal(request.url, "https://aiplatform.googleapis.com/v1beta1/projects/fixture-project/locations/global/interactions");
     assert.equal(request.headers.Authorization, "Bearer fixture-token");
@@ -77,7 +101,7 @@ test("bounded usage and Interactions wire agree, including all supported duratio
     assert.deepEqual(request.body.input, [{ type: "user_input", content: [{ type: "text", text: "Fixture" }] }]);
     const usage = plugin.extractUsage(ctx);
     assert.deepEqual(request.body.response_format, [{
-      type: "video", aspect_ratio: "9:16", resolution: "720p", duration: String(usage.seconds) + "s",
+      type: "video", aspect_ratio: "9:16", resolution: "720p", duration: String(usage.seconds) + "s", ...delivery,
     }]);
     assert.equal(usage.resolution, "720p");
   }
@@ -98,7 +122,8 @@ test("invalid billing multipliers, conflicting aliases and hidden wire overrides
     { n: 2 }, { n: null }, { metadata: { candidate_count: 3 } }, { resolution: "8k" },
     { response_format: [] }, { generation_config: {} },
     { background: false }, { store: false }, { stream: true }, { model: "veo-3.1" },
-    { task: "unknown" }, { audios: ["data:audio/mpeg;base64,YQ=="] },
+    { task: "unknown" }, { audios: ["https://cdn.example.com/a.mp3"] },
+    { metadata: { output_gcs_uri: "gs://fixture-bucket/out/" } },
   ]) assert.throws(() => decode(value));
   for (const value of [{ duration: 11 }, { duration: 4, seconds: 3 }, { n: 100 }]) {
     assert.throws(() => plugin.extractUsage({ model, requestBody: { prompt: "Fixture", ...value } }));
@@ -106,111 +131,168 @@ test("invalid billing multipliers, conflicting aliases and hidden wire overrides
   }
 });
 
-test("image/video references use documented typed parts without silently downloading HTTP input", () => {
-  const request = plugin.buildSubmitRequest(driver({
-    video: "data:video/mp4;base64,dmlkZW8=",
-    images: ["data:image/png;base64,aW1hZ2U=", "gs://fixture-bucket/image.webp"],
-    metadata: { previous_interaction_id: "v1_previous" },
-  }));
-  assert.equal(request.action, "reference_to_video");
-  assert.deepEqual(request.body.input[0].content.map(part => part.type), ["video", "image", "image", "text"]);
-  assert.equal(request.body.input[0].content[0].data, "dmlkZW8=");
-  assert.equal(request.body.input[0].content[2].uri, "gs://fixture-bucket/image.webp");
-  assert.equal(request.body.previous_interaction_id, "v1_previous");
-  assert.equal(request.body.response_format[0].delivery, undefined);
-  assert.equal(request.body.generation_config, undefined, "continuation inherits its mode");
-  assert.equal(plugin.buildSubmitRequest(driver({
-    metadata: { output_gcs_uri: "gs://fixture-bucket/out/" },
-  })).body.response_format[0].delivery, "uri");
+test("inputs are HTTP(S) URLs only; Data URI, bucket, object and file references are rejected", () => {
+  for (const url of [clip, "http://cdn.example.com/a.mp4", "https://cdn.example.com/a.mp4?sig=x&t=1",
+    "https://cdn.example.com:8443/path/a%20b.mp4#frag"]) assert.equal(decode({ video: url }).action, "edit");
   for (const value of [
-    { images: "not-array" }, { videos: Array(4).fill("gs://fixture-bucket/a.mp4") },
-    { images: Array(11).fill("gs://fixture-bucket/a.png") },
-    { images: ["https://assets.example.invalid/a.png"] },
-    { videos: ["http://127.0.0.1/input.mp4"] }, { image: "data:image/svg+xml;base64,eA==" },
-    { image: "data:image/png;base64,%%%" }, { videos: ["data:video/mp4;base64,YQ"] },
+    { video: "data:video/mp4;base64,dmlkZW8=" }, { image: "data:image/png;base64,aW1hZ2U=" },
+    { image: "gs://fixture-bucket/image.webp" }, { video: "ftp://cdn.example.com/a.mp4" },
+    { image: "https://user:pass@cdn.example.com/a.png" }, { image: "https://cdn.example.com/a b.png" },
+    { image: "https:///a.png" }, { image: "https://cdn.example.com/" + "a".repeat(4100) },
+    { image: { uri: still } }, { image: { __fileRef: "request_file:image", mimeType: "image/png" } },
+    { images: "not-array" }, { videos: Array(4).fill(clip) }, { images: Array(11).fill(still) },
     { metadata: { previous_interaction_id: "../bad" } },
-  ]) assert.throws(() => decode(value));
+  ]) assert.throws(() => decode(value), undefined, JSON.stringify(value).slice(0, 80));
+  assert.throws(() => decode({ video: "data:video/mp4;base64,dmlkZW8=" }), /HTTP\(S\) URL/);
+  assert.throws(() => plugin.protocols.openai_video.decodeRequest({ model, body: { kind: "multipart",
+    fields: { prompt: ["Fixture"] }, files: [{ ref: "request_file:video", field: "video", size: 4, mimeType: "video/mp4" }] } }), /JSON/);
 });
 
-test("official Omni modes, sampling, frame roles, and total-duration extension billing are explicit", () => {
-  const highQuality = plugin.buildSubmitRequest(driver({
-    duration: 10, resolution: "4k", temperature: 0.4, top_p: 0.8,
-  }));
-  assert.equal(highQuality.body.response_format[0].resolution, "4k");
-  assert.deepEqual(highQuality.body.generation_config, {
-    video_config: { task: "text_to_video" }, temperature: 0.4, top_p: 0.8,
-  });
-  assert.deepEqual(plugin.extractUsage({ model, requestBody: decode({
-    duration: 10, resolution: "4k", temperature: 0.4, top_p: 0.8,
-  }).requestBody }), { seconds: 10, resolution: "4k" });
+test("preflight ingests every URL in content order; the channel token is never a header", () => {
+  const ctx = driver({ video: clip, images: [still, "https://cdn.example.com/b.webp"],
+    metadata: { previous_interaction_id: "v1_previous" } });
+  const preflight = plugin.buildPreflightRequest(ctx);
+  assert.equal(preflight.url, "https://assets.88api.ai/gcs/ingest");
+  assert.equal(preflight.method, "POST");
+  assert.deepEqual(preflight.headers, { "Content-Type": "application/json", Accept: "application/json" });
+  assert.deepEqual(preflight.body, { authorization: "Bearer fixture-token", bucket, measure: false, items: [
+    { url: clip, kind: "video" }, { url: still, kind: "image" }, { url: "https://cdn.example.com/b.webp", kind: "image" },
+  ] });
+  const request = plugin.buildSubmitRequest(ingested(ctx));
+  assert.equal(request.action, "reference_to_video");
+  assert.deepEqual(request.body.input[0].content, [
+    { type: "video", mime_type: "video/mp4", uri: "gs://" + bucket + "/vertex-omni-inputs/2026-10-09/0.mp4" },
+    { type: "image", mime_type: "image/png", uri: "gs://" + bucket + "/vertex-omni-inputs/2026-10-09/1.png" },
+    { type: "image", mime_type: "image/png", uri: "gs://" + bucket + "/vertex-omni-inputs/2026-10-09/2.png" },
+    { type: "text", text: "Fixture" },
+  ]);
+  assert.equal(request.body.previous_interaction_id, "v1_previous");
+  assert.equal(request.body.generation_config, undefined, "continuation inherits its mode");
+  assert.ok(!JSON.stringify(request.body).includes("cdn.example.com"), "Google only receives gs:// URIs");
+});
 
-  const reference = plugin.buildSubmitRequest(driver({
-    task: "reference_to_video",
-    videos: ["data:video/mp4;base64,dmlkZW8=", "data:video/mp4;base64,dmlkZW8=", "data:video/mp4;base64,dmlkZW8="],
-  }));
+test("inconsistent or failed ingest answers stop the request before Google is called", () => {
+  const ctx = driver({ images: [still, "https://cdn.example.com/b.png"] });
+  for (const [label, broken, message] of [
+    ["no preflight", { ...ctx }, /未返回有效结果/],
+    ["worker error", { ...ctx, preflightResponse: { body: { object: "gcs_ingest", error: { code: "source_too_large", message: "image exceeds 20MiB" } } } }, /source_too_large/],
+    ["count", ingested(ctx, undefined, items => items.slice(1)), /数量/],
+    ["order", ingested(ctx, undefined, items => items.reverse()), /不一致/],
+    ["kind", ingested(ctx, undefined, items => items.map(item => ({ ...item, kind: "video" }))), /不一致/],
+    ["mime", ingested(ctx, undefined, items => items.map(item => ({ ...item, mime_type: "image/svg+xml" }))), /不一致/],
+    ["foreign bucket", ingested(ctx, undefined, items => items.map(item => ({ ...item, uri: "gs://elsewhere/a.png" }))), /不一致/],
+    ["not gcs", ingested(ctx, undefined, items => items.map(item => ({ ...item, uri: still }))), /gs:\/\//],
+  ]) assert.throws(() => plugin.buildSubmitRequest(broken), message, label);
+});
+
+test("official Omni modes, sampling, frame roles and extension wire are explicit", () => {
+  const highQuality = plugin.buildSubmitRequest(driver({ duration: 10, resolution: "4k", temperature: 0.4, top_p: 0.8 }));
+  assert.equal(highQuality.body.response_format[0].resolution, "4k");
+  assert.deepEqual(highQuality.body.generation_config, { video_config: { task: "text_to_video" }, temperature: 0.4, top_p: 0.8 });
+  assert.deepEqual(plugin.extractUsage(driver({ duration: 10, resolution: "4k" })), { seconds: 10, resolution: "4k" });
+
+  const reference = plugin.buildSubmitRequest(ingested(driver({ task: "reference_to_video", videos: [clip, clip, clip] })));
   assert.equal(reference.body.input[0].content.filter(part => part.type === "video").length, 3);
   assert.equal(reference.body.generation_config.video_config.task, "reference_to_video");
 
-  const frames = plugin.buildSubmitRequest(driver({
-    task: "image_to_video",
-    first_frame: "data:image/png;base64,YQ==",
-    last_frame: "data:image/png;base64,Yg==",
-  }));
-  assert.deepEqual(frames.body.input[0].content.slice(0, 2).map(part => part.data), ["YQ==", "Yg=="]);
+  const frames = plugin.buildSubmitRequest(ingested(driver({ task: "image_to_video", first_frame: still,
+    last_frame: "https://cdn.example.com/last.png" })));
+  assert.deepEqual(frames.body.input[0].content.slice(0, 2).map(part => part.uri.split("/").pop()), ["0.png", "1.png"]);
   assert.ok(frames.body.input[0].content.every(part => part.role === undefined));
   assert.match(frames.body.input[0].content[2].text, /first image.*first frame.*second image.*last frame/);
 
-  const edit = plugin.buildSubmitRequest(driver({
-    task: "edit", video: "data:video/mp4;base64,dmlkZW8=", duration: 3,
-  }));
-  assert.deepEqual(edit.body.response_format, [{ type: "video" }]);
+  const edit = plugin.buildSubmitRequest(ingested(driver({ task: "edit", video: clip, duration: 3 })));
+  assert.deepEqual(edit.body.response_format, [{ type: "video", ...delivery }]);
   assert.equal(edit.body.generation_config.video_config.task, "edit");
-  const editHD = plugin.buildSubmitRequest(driver({
-    task: "edit", video: "data:video/mp4;base64,dmlkZW8=", resolution: "1080p",
-  }));
-  assert.deepEqual(editHD.body.response_format, [{ type: "video", resolution: "1080p" }]);
+  const editHD = plugin.buildSubmitRequest(ingested(driver({ task: "edit", video: clip, resolution: "1080p" })));
+  assert.deepEqual(editHD.body.response_format, [{ type: "video", resolution: "1080p", ...delivery }]);
 
-  const extend = driver({
-    task: "extend", video: "data:video/mp4;base64," + mp4(3),
-    duration: 6, input_duration: 3,
-  });
-  const extension = plugin.buildSubmitRequest(extend);
-  assert.deepEqual(extension.body.response_format, [{ type: "video" }]);
+  const extend = driver({ task: "extend", video: clip, input_duration: 10 });
+  assert.equal(plugin.buildPreflightRequest(extend).body.measure, true, "extensions measure their input");
+  const extension = plugin.buildSubmitRequest(ingested(extend));
+  assert.deepEqual(extension.body.response_format, [{ type: "video", ...delivery }]);
   assert.equal(extension.body.generation_config.video_config.task, "extend");
-  assert.deepEqual(plugin.extractUsage(extend), { seconds: 6, resolution: "720p" });
-  assert.throws(() => decode({
-    task: "extend", video: "data:video/mp4;base64," + mp4(3), duration: 3, input_duration: 3,
-  }), /大于输入/);
+  assert.deepEqual(plugin.extractUsage(extend), { seconds: 11, resolution: "720p" });
+  const extendHD = driver({ task: "extend", video: clip, resolution: "1080p" });
+  assert.deepEqual(plugin.buildSubmitRequest(ingested(extendHD)).body.response_format,
+    [{ type: "video", resolution: "1080p", ...delivery }]);
+  assert.deepEqual(plugin.extractUsage(extendHD), { seconds: 11, resolution: "1080p" });
 });
 
-test("extension settles full output movie duration, not added seconds, tokens, or client hints", () => {
-  for (const version of [0, 1]) {
-    const ctx = driver({ task: "extend", video: "data:video/mp4;base64," + mp4(3), duration: 6 });
-    const submitted = plugin.parseSubmitResponse(ctx, { body: { id: "v1_fixture", status: "in_progress" } });
-    assert.equal(submitted.state.input_seconds, 3);
-    const query = { taskId: "v1_fixture", action: "extend", state: submitted.state };
-    const data = completed({ type: "video", mime_type: "video/mp4", data: mp4(9, "360p", version) });
-    data.duration = 999; data.usage = { total_output_tokens: 17376 };
-    const parsed = plugin.parseTaskResult(query, data);
-    assert.equal(parsed.status, "SUCCESS");
-    assert.equal(parsed.state.output_seconds, 9);
-    assert.deepEqual(plugin.extractUsageOnComplete(query, parsed, data), { seconds: 9, resolution: "360p" });
-    const immediate = plugin.parseSubmitResponse(ctx, { body: data });
-    assert.equal(immediate.immediate.status, "SUCCESS");
-    assert.deepEqual(plugin.extractUsageOnComplete({ action: "extend", state: immediate.state },
-      immediate.immediate, immediate.taskData), { seconds: 9, resolution: "360p" });
+test("extension requests and measured inputs are bounded to what Google accepts", () => {
+  const base = { task: "extend", video: clip };
+  for (const [value, message] of [
+    [{ ...base, resolution: "4k" }, /720p 或 1080p/], [{ ...base, resolution: "360p" }, /720p 或 1080p/],
+    [{ ...base, duration: 20 }, /固定新增/], [{ ...base, metadata: { durationSeconds: 40 } }, /固定新增/],
+    [{ ...base, size: "1280x720" }, /沿用输入画面/], [{ ...base, aspect_ratio: "16:9" }, /沿用输入画面/],
+    [{ ...base, video: undefined }, /1 个参考视频/], [{ ...base, input_duration: 31 }, /1 到 30/],
+  ]) assert.throws(() => decode(value), message);
+  for (const [facts, message] of [[null, /可测量时长/], [{ seconds: "10" }, /可测量时长/],
+    [{ seconds: 0.5 }, /1 到 30/], [{ seconds: 31 }, /截取末尾/]]) {
+    assert.throws(() => plugin.buildSubmitRequest(ingested(driver(base), facts)), message);
   }
-  const base = { task: "extend", video: "data:video/mp4;base64," + mp4(3) };
-  assert.equal(plugin.extractUsage(driver(base)).seconds, 40);
-  assert.throws(() => decode({ ...base, video: "data:video/mp4;base64," + mp4(31) }), /1 到 30/);
-  assert.throws(() => decode({ ...base, metadata: { output_gcs_uri: "gs://fixture-bucket/out/" } }), /内联 MP4/);
-  assert.throws(() => decode({ ...base, size: "1280x720" }), /沿用输入画面/);
-  assert.throws(() => decode({ ...base, resolution: "4k" }), /沿用输入分辨率/);
-  assert.equal(plugin.parseTaskResult({ action: "extend" }, completed()).status, "UNKNOWN");
-  assert.equal(plugin.extractUsageOnComplete({}, {}, { usage: { total_tokens: 99999 } }), null);
+  assert.throws(() => plugin.buildSubmitRequest(ingested(driver({ ...base, input_duration: 9 }), { seconds: 10 })), /不一致/);
+  assert.equal(plugin.buildSubmitRequest(ingested(driver(base), { seconds: 30.037 })).action, "extend");
 });
 
-test("extension bills the full playable movie when video and audio timelines differ", () => {
+test("new extensions settle measured output minus measured input via the Worker probe", () => {
+  const ctx = ingested(driver({ task: "extend", video: clip, resolution: "1080p" }), { seconds: 10, resolution: "4k" });
+  const submitted = plugin.parseSubmitResponse(ctx, { body: { id: "v1_fixture", status: "in_progress" } });
+  assert.deepEqual(submitted.state, { seconds: 11, resolution: "1080p", aspect_ratio: "16:9", input_seconds: 10,
+    bill_added_seconds: true, task: "extend" });
+  const query = { ...driver(), taskId: "v1_fixture", action: "extend", state: submitted.state, requestBody: undefined };
+  const done = completed({ type: "video", mime_type: "video/mp4", uri: stored });
+  done.usage = { total_output_tokens: 86880 };
+  const waiting = plugin.parseTaskResult(query, done);
+  assert.equal(waiting.status, "IN_PROGRESS");
+  assert.equal(waiting.progress, "95%");
+  assert.equal(waiting.state.probe_uri, stored);
+  const probing = { ...query, state: waiting.state };
+  const request = plugin.buildQueryRequest(probing);
+  assert.equal(request.url, "https://assets.88api.ai/gcs/probe?id=v1_fixture&uri=" + encodeURIComponent(stored));
+  assert.equal(request.method, "GET");
+  assert.deepEqual(request.headers, { Accept: "application/json" }, "Google OAuth is not sent to the probe");
+  const body = probe({ seconds: 20.032, resolution: "1080p", width: 1920, height: 1080 });
+  body.duration = 999; body.usage = { total_output_tokens: 1 };
+  const result = plugin.parseTaskResult(probing, body);
+  assert.equal(result.status, "SUCCESS");
+  assert.equal(result.url, "https://storage.googleapis.com/storage/v1/b/" + bucket + "/o/" +
+    encodeURIComponent("vertex-omni/task_fixture01/123.mp4") + "?alt=media");
+  assert.equal(result.state.output_seconds, 20.032);
+  assert.deepEqual(plugin.extractUsageOnComplete(probing, result, body), { seconds: 10.032, resolution: "1080p" });
+  assert.deepEqual(plugin.listArtifacts({ status: "SUCCESS", data: body }), [{ key: "video", type: "video", mimeType: "video/mp4" }]);
+  // Inline completion (should Google ignore URI delivery) settles the same way.
+  const inline = completed({ type: "video", mime_type: "video/mp4", data: mp4(20, "720p", 0, 20.032) });
+  const inlineResult = plugin.parseTaskResult(query, inline);
+  assert.equal(inlineResult.status, "SUCCESS");
+  assert.deepEqual(plugin.extractUsageOnComplete(query, inlineResult, inline), { seconds: 10.032, resolution: "720p" });
+  const immediate = plugin.parseSubmitResponse(ctx, { body: inline });
+  assert.deepEqual(plugin.extractUsageOnComplete({ action: "extend", state: immediate.state },
+    immediate.immediate, immediate.taskData), { seconds: 10.032, resolution: "720p" });
+});
+
+test("probe answers fail closed without refunding or settling estimates", () => {
+  const state = { seconds: 11, task: "extend", bill_added_seconds: true, input_seconds: 10, probe_uri: stored };
+  const query = { taskId: "v1_fixture", action: "extend", state };
+  for (const body of [
+    { ...probe(), error: { code: "gcs_unavailable", message: "upstream 503" } },
+    probe({ seconds: 20, resolution: "720p" }, outputPrefix + "other.mp4"),
+    probe({ seconds: 0, resolution: "720p" }), probe({ seconds: 42, resolution: "720p" }),
+    probe({ seconds: "20", resolution: "720p" }), probe({ seconds: 20, resolution: "8k" }),
+    probe({ seconds: 9.5, resolution: "720p" }), { ...probe(), id: "v1_other" },
+  ]) {
+    const result = plugin.parseTaskResult(query, body);
+    assert.equal(result.status, "UNKNOWN", JSON.stringify(body).slice(0, 120));
+    if (body.id === "v1_fixture") assert.throws(() => plugin.extractUsageOnComplete(query, { status: "SUCCESS" }, body));
+  }
+  assert.equal(plugin.parseTaskResult({ ...query, state: { seconds: 3 } }, probe()).status, "UNKNOWN", "unrequested probe");
+  assert.throws(() => plugin.buildQueryRequest({ ...query, state: { ...state, probe_uri: "https://evil.invalid/a" } }));
+  // Pre-1.3.0 extension snapshots (no added-seconds flag) keep full-output billing.
+  const legacy = { taskId: "v1_fixture", action: "extend", state: { task: "extend", seconds: 40, probe_uri: stored } };
+  assert.deepEqual(plugin.extractUsageOnComplete(legacy, { status: "SUCCESS" }, probe()), { seconds: 20.032, resolution: "720p" });
+});
+
+test("legacy extension snapshots bill the full playable movie when video and audio timelines differ", () => {
   for (const version of [0, 1]) {
     const query = { action: "extend", state: { task: "extend", seconds: 40 } };
     const data = completed({ type: "video", mime_type: "video/mp4", data: mp4(6, "360p", version, 9.024) });
@@ -221,7 +303,7 @@ test("extension bills the full playable movie when video and audio timelines dif
   }
 });
 
-test("40s extension tolerates the verified audio tail but rejects oversized movie or video timelines", () => {
+test("40s results tolerate the verified audio tail but reject oversized movie or video timelines", () => {
   const query = { action: "extend", state: { task: "extend", seconds: 40 } };
   const valid = completed({ type: "video", mime_type: "video/mp4", data: mp4(40, "360p", 0, 40.363) });
   const result = plugin.parseTaskResult(query, valid);
@@ -249,28 +331,30 @@ test("new multi-turn reserves safely and bills the complete new MP4, not request
   assert.equal(submitted.state.seconds, 40);
   assert.equal(submitted.state.requested_seconds, 3);
   const query = { taskId: "v1_fixture", action: "text_to_video", state: submitted.state };
-  const data = completed({ type: "video", mime_type: "video/mp4", data: mp4(6, "1080p", 0, 6.037) });
-  const result = plugin.parseTaskResult(query, data);
+  const waiting = plugin.parseTaskResult(query, completed({ type: "video", mime_type: "video/mp4", uri: stored }));
+  assert.equal(waiting.status, "IN_PROGRESS");
+  assert.equal(waiting.state.task, undefined, "continuation must not be reclassified as extend");
+  const probed = { ...query, state: waiting.state };
+  const body = probe({ seconds: 6.037, resolution: "1080p" });
+  const result = plugin.parseTaskResult(probed, body);
   assert.equal(result.status, "SUCCESS");
-  assert.equal(result.state.task, undefined, "continuation must not be reclassified as extend");
-  assert.equal(result.state.bill_output_duration, true);
-  assert.deepEqual(plugin.extractUsageOnComplete(query, result, data), { seconds: 6.037, resolution: "1080p" });
-  const immediate = plugin.parseSubmitResponse(ctx, { body: data });
+  assert.deepEqual(plugin.extractUsageOnComplete(probed, result, body), { seconds: 6.037, resolution: "1080p" });
+  const inline = completed({ type: "video", mime_type: "video/mp4", data: mp4(6, "1080p", 0, 6.037) });
+  const immediate = plugin.parseSubmitResponse(ctx, { body: inline });
   assert.deepEqual(plugin.extractUsageOnComplete({ state: immediate.state }, immediate.immediate, immediate.taskData),
     { seconds: 6.037, resolution: "1080p" });
 });
 
-test("legacy continuation snapshots retain request billing while new unmeasurable results fail closed", () => {
+test("legacy continuation snapshots retain request billing while unmeasurable results fail closed", () => {
   const oldQuery = { action: "text_to_video", state: { seconds: 3, resolution: "1080p" } };
   const data = completed({ type: "video", mime_type: "video/mp4", data: mp4(6, "1080p", 0, 6.037) });
   assert.equal(plugin.parseTaskResult(oldQuery, data).status, "SUCCESS");
   assert.equal(plugin.extractUsageOnComplete(oldQuery, { status: "SUCCESS" }, data), null);
-  const query = { state: { bill_output_duration: true, seconds: 40 } };
-  const unmeasurable = completed({ type: "video", mime_type: "video/mp4", uri: "gs://fixture-bucket/out.mp4" });
-  assert.equal(plugin.parseTaskResult(query, unmeasurable).status, "UNKNOWN");
-  assert.throws(() => plugin.extractUsageOnComplete(query, { status: "SUCCESS" }, unmeasurable), /完整时长/);
-  assert.throws(() => decode({ previous_interaction_id: "v1_previous",
-    metadata: { output_gcs_uri: "gs://fixture-bucket/out/" } }), /内联 MP4/);
+  const query = { taskId: "v1_fixture", state: { bill_output_duration: true, seconds: 40 } };
+  const delivered = completed({ type: "video", mime_type: "video/mp4", uri: stored });
+  assert.throws(() => plugin.extractUsageOnComplete(query, { status: "SUCCESS" }, delivered), /完整时长/);
+  const external = completed({ type: "video", mime_type: "video/mp4", uri: "https://cdn.example.invalid/out.mp4" });
+  assert.equal(plugin.parseTaskResult(query, external).status, "UNKNOWN");
 });
 
 test("all documented resolution and orientation sizes agree with wire and frozen usage", () => {
@@ -286,39 +370,13 @@ test("all documented resolution and orientation sizes agree with wire and frozen
   }
   for (const value of [
     { size: "1080x1920", resolution: "720p" },
-    { first_frame: "data:image/png;base64,YQ==", firstFrame: "data:image/png;base64,Yg==" },
-    { last_frame: "data:image/png;base64,YQ==" },
-    { task: "text_to_video", image: "data:image/png;base64,YQ==" },
-    { task: "image_to_video", image: "data:image/png;base64,YQ==", video: "data:video/mp4;base64,dmlkZW8=" },
+    { first_frame: still, firstFrame: "https://cdn.example.com/other.png" },
+    { last_frame: still },
+    { task: "text_to_video", image: still },
+    { task: "image_to_video", image: still, video: clip },
     { temperature: true }, { temperature: null }, { temperature: 2.1 }, { top_p: 1.1 },
     { previous_interaction_id: "one", metadata: { previous_interaction_id: "two" } },
   ]) assert.throws(() => decode(value));
-});
-
-test("multipart parsing preserves repeated file identities and rejects repeated scalars or oversized input", () => {
-  const body = { kind: "multipart", fields: { prompt: ["Fixture"], seconds: ["4"], size: ["720x1280"] },
-    files: [
-      { ref: "request_file:images", field: "images", size: 4, mimeType: "image/png" },
-      { ref: "request_file:images#1", field: "images", size: 4, mimeType: "image/jpeg" },
-      { ref: "request_file:video", field: "video", size: 4, mimeType: "video/mp4" },
-    ] };
-  const decoded = plugin.protocols.openai_video.decodeRequest({ model, body });
-  const request = plugin.buildSubmitRequest({ ...driver(), requestBody: decoded.requestBody });
-  assert.deepEqual(request.body.input[0].content.slice(0, 3).map(part => part.data.__fileRef),
-    ["request_file:video", "request_file:images", "request_file:images#1"]);
-  assert.equal(request.body.input[0].content[0].data.maxBytes, 64 * 1024 * 1024);
-  assert.equal(request.body.input[0].content[1].data.maxBytes, 20 * 1024 * 1024);
-  for (const invalid of [
-    { ...body, fields: { ...body.fields, duration: ["3", "4"] } },
-    { ...body, files: [{ ref: "request_file:video", field: "video", size: 64 * 1024 * 1024 + 1, mimeType: "video/mp4" }] },
-    { ...body, fields: { ...body.fields, metadata: ["not-json"] } },
-  ]) assert.throws(() => plugin.protocols.openai_video.decodeRequest({ model, body: invalid }));
-});
-
-test("JSON and file references enforce exact byte limits", () => {
-  const tooLargeImage = Buffer.alloc(20 * 1024 * 1024 + 1).toString("base64");
-  assert.throws(() => decode({ image: "data:image/png;base64," + tooLargeImage }), /大小/);
-  assert.throws(() => decode({ image: { __fileRef: "malicious", mimeType: "image/png" } }), /文件引用/);
 });
 
 test("submission persists small state; polling has no dependency on requestBody or module globals", () => {
@@ -343,7 +401,7 @@ test("submission persists small state; polling has no dependency on requestBody 
 test("poll lifecycle is strict and terminal errors remain legible", () => {
   for (const [status, expected, progress] of [["queued", "QUEUED", "0%"], ["in_progress", "IN_PROGRESS", "50%"],
     ["failed", "FAILURE", "100%"], ["cancelled", "FAILURE", "100%"], ["requires_action", "FAILURE", "100%"],
-    ["completed", "IN_PROGRESS", "90%"], ["new-provider-state", "UNKNOWN", undefined]]) {
+    ["completed", "FAILURE", "100%"], ["new-provider-state", "UNKNOWN", undefined]]) {
     const result = plugin.parseTaskResult({}, { id: "v1_fixture", status });
     assert.equal(result.status, expected);
     assert.equal(result.progress, progress);
@@ -354,93 +412,9 @@ test("poll lifecycle is strict and terminal errors remain legible", () => {
   assert.equal(plugin.parseTaskResult({}, { errors: [error] }).reason, "[IMAGE_POLICY_FILTERED] Provider safety reason");
   assert.throws(() => plugin.parseSubmitResponse(driver(), { body: { error } }), /Provider safety reason/);
   const echoed = { id: "v1_fixture", status: "completed", steps: [
-    { type: "user_input", content: [{ type: "video", mime_type: "video/mp4", data: "dmlkZW8=" }] },
+    { type: "user_input", content: [{ type: "video", mime_type: "video/mp4", uri: "gs://" + bucket + "/in.mp4" }] },
   ] };
-  assert.equal(plugin.parseTaskResult({}, echoed).status, "IN_PROGRESS");
-});
-
-function applyChanges(root, changes) {
-  for (const change of changes) {
-    if (change.path.length === 0) { root = change.value; continue; }
-    const path = change.path.slice(), key = path.pop();
-    let parent = root;
-    for (const segment of path) parent = parent[segment];
-    if (change.op === "set") parent[key] = change.value;
-    else if (change.op === "append") parent[key].push(change.value);
-    else if (change.op === "appendText") parent[key] += change.value;
-    else assert.fail("Unknown change operation");
-  }
-  return root;
-}
-
-function replayEvents(events, taskId = "v1_fixture") {
-  let state = null, root = null, done = false;
-  for (const body of events) {
-    const delta = plugin.parseQueryEventDelta({ taskId }, { event: body.event_type, id: "", body }, state);
-    root = applyChanges(root, delta.changes);
-    state = delta.state;
-    done = delta.done;
-  }
-  return { root, state, done };
-}
-
-function queryEvents(data = "dmlkZW8=") {
-  return [
-    { event_type: "interaction.created", interaction: { id: "v1_fixture", status: "in_progress", model: upstream } },
-    { event_type: "step.start", index: 0, step: { type: "thought" } },
-    { event_type: "step.delta", index: 0, delta: { type: "thought_summary", content: { text: "not-public" } } },
-    { event_type: "step.stop", index: 0 },
-    { event_type: "step.start", index: 1, step: { type: "model_output" } },
-    { event_type: "step.delta", index: 1, event_id: "chunk1", delta: { type: "video", mime_type: "video/mp4", data } },
-    { event_type: "step.stop", index: 1 },
-    { event_type: "interaction.completed", interaction: { id: "v1_fixture", status: "completed", usage: { total_tokens: 42 } } },
-  ];
-}
-
-test("missing media in a completed JSON view triggers readonly SSE fallback, not failure/refund", () => {
-  const ctx = { ...driver(), taskId: "v1_fixture", state: { seconds: 10, resolution: "4k" } };
-  const first = plugin.parseTaskResult(ctx, { id: "v1_fixture", status: "completed" });
-  assert.equal(first.status, "IN_PROGRESS");
-  assert.equal(first.state.query_sse, true);
-  assert.equal(first.state.seconds, 10);
-  const query = plugin.buildQueryRequest({ ...ctx, state: first.state });
-  assert.equal(query.method, "GET");
-  assert.equal(query.responseType, "sse");
-  assert.equal(query.headers.Accept, "text/event-stream");
-  assert.match(query.url, /v1_fixture\?stream=true&include_input=false$/);
-  assert.equal(plugin.parseTaskResult({ ...ctx, state: first.state },
-    { id: "v1_fixture", status: "completed" }).status, "UNKNOWN");
-  assert.equal(plugin.parseTaskResult(ctx, { id: "v1_fixture", status: "failed" }).status, "FAILURE");
-});
-
-test("SSE deltas normalize real event shapes without persisting thoughts or media in control state", () => {
-  const { root, state, done } = replayEvents(queryEvents());
-  assert.equal(done, true);
-  assert.equal(root.status, "completed");
-  assert.deepEqual(root.outputs, [{ type: "video", mime_type: "video/mp4", data: "dmlkZW8=" }]);
-  assert.equal(root.usage.total_tokens, 42);
-  assert.ok(!JSON.stringify(root).includes("not-public"));
-  assert.ok(!JSON.stringify(state).includes("dmlkZW8="));
-  assert.equal(plugin.parseTaskResult({ taskId: "v1_fixture" }, root).status, "SUCCESS");
-});
-
-test("split video chunks and repeated event IDs reconstruct one result once", () => {
-  const events = queryEvents("dmlk");
-  const extra = { event_type: "step.delta", index: 1, event_id: "chunk2",
-    delta: { type: "video", mime_type: "video/mp4", data: "ZW8=" } };
-  events.splice(6, 0, extra, extra);
-  assert.equal(replayEvents(events).root.outputs[0].data, "dmlkZW8=");
-});
-
-test("SSE rejects wrong IDs, missing starts, unfinished steps and malformed video delivery", () => {
-  assert.throws(() => replayEvents(queryEvents(), "v1_wrong"), /编号/);
-  assert.throws(() => replayEvents(queryEvents().slice(1)), /开始事件/);
-  const unfinished = queryEvents(); unfinished.splice(6, 1);
-  assert.throws(() => replayEvents(unfinished), /尚未结束/);
-  const mismatch = queryEvents(); mismatch[5].interaction_id = "other";
-  assert.throws(() => replayEvents(mismatch), /编号/);
-  const malformed = queryEvents(); malformed[5].delta.uri = "gs://bucket/file.mp4";
-  assert.throws(() => replayEvents(malformed), /冲突/);
+  assert.equal(plugin.parseTaskResult({}, echoed).status, "FAILURE", "echoed input is never a result");
 });
 
 test("steps/outputs and flat/nested media produce results, including immediate completion", () => {
@@ -478,9 +452,14 @@ test("malformed connections never construct credential-bearing requests", () => 
     { baseUrl: "https://user:password@example.invalid" }, { baseUrl: "https://host.invalid?redirect=elsewhere" },
     { auth: { projectId: "../other" } }, { authHeader: "Bearer fixture\r\nX-Secret: leaked" },
     { upstream: { kind: "new_api" } },
-  ]) assert.throws(() => plugin.buildSubmitRequest({ ...driver(), ...changes }));
+  ]) {
+    assert.throws(() => plugin.buildSubmitRequest({ ...driver(), ...changes }));
+    assert.throws(() => plugin.buildPreflightRequest({ ...driver({ image: still }), ...changes }));
+  }
   for (const suffix of ["/v1", "/v1beta1", "/"]) {
     assert.equal(plugin.buildSubmitRequest({ ...driver(), baseUrl: plugin.meta.baseUrl + suffix }).url,
       plugin.buildSubmitRequest(driver()).url);
   }
+  assert.equal(plugin.buildSubmitRequest({ ...driver(), publicTaskId: undefined }).body.response_format[0].gcs_uri,
+    "gs://" + bucket + "/vertex-omni/unassigned/");
 });

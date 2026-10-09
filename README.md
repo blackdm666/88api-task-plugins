@@ -38,28 +38,66 @@ Minimax-H3 与 XM-Video 的初始独立版本与当时88API镜像和生产自定
 
 ## Vertex Omni：独立隔离测试版
 
-`vertex-omni@1.2.0` 是独立的 Vertex Interactions 视频插件，不覆盖
+`vertex-omni@1.3.0` 是独立的 Vertex Interactions 视频插件，不覆盖
 `vertex-ai`，不声明渠道类型41，不注册Veo、旧Omni或正式1.1模型名，
 也不启用动态模型接管。当前只声明 `vertex-omni-1.1-test`；默认发送精确
 上游ID `gemini-omni-1.1-flash-preview`，也允许测试渠道显式映射到该ID。
 它只适用于单独绑定此插件的 Task Plugin 渠道，不支持 New API 中继渠道。
-1.2.0要求宿主提供`query-sse-delta@1`，必须先升级兼容宿主再上传/激活；
-旧宿主会拒绝该能力声明，不能把API v1相同当作支持SSE查询。
+1.3.0不再声明`query-sse-delta@1`，改为声明`task-preflight@1`，可安装在没有SSE查询
+能力的宿主上（已在锁定宿主`1debc5f3`及其父提交`800dc5a`上运行回归）。
 
-### 大视频取回
+### 1.3.0：HTTP(S)输入、中央GCS桶交付、延长按新增秒数计费
 
-普通JSON查询仍用于排队/进行中状态。若Google返回completed但JSON视图
-没有视频，插件保存`query_sse=true`并返回非终态90%，不立即判失败退款。
-下一轮只读GET启用`stream=true`；不会重新POST生成任务。
+依据2026-10-09生产账号实测（3s/10s 4K、720p、1080p、延长链10→40s、跨项目读写）：
 
-宿主以原生JSON解码SSE事件，插件返回小控制状态及增量操作，
-宿主归一化为标准JSON后再解析终态、提取用量、清除媒体字节并私有缓存。
-输入/思考/签名不进入规范化成品；完整终态前的截断流不能伪装成功。
-查询响应/事件/规范结果最多128MiB，控制状态最多64KiB；
-已有提交和持久化状态的1MiB限制不变。某些更低的运营扫描器配置可能
-额外收紧事件长度；不能用无限制缓冲绕过资源约束。
+- Google的JSON查询视图会丢弃大型内联视频：10s 4K约60MB时，视频整段缺失。
+  SSE回放也只是把整段Base64放进单个事件（约80MB），并不分片。
+  `response_format`带`delivery:"uri"`和`gcs_uri`时，从720p到10s 4K都会返回`gs://`。
+- Interactions输入**只接受GCS URI**（HTTPS输入会被拒：
+  `Only GCS URIs are supported`）。因此输入**只接受HTTP(S) URL**（图片20MiB、
+  视频64MiB）。插件声明`task-preflight@1`，在提交前把URL交给传输Worker的
+  `POST https://assets.88api.ai/gcs/ingest`：
+  - Worker下载时做SSRF校验，重定向逐跳校验，且不携带任何凭据；
+  - 下载内容流式写入`gs://88api-omni-media/vertex-omni-inputs/<日期>/<UUID>`；
+  - 延长任务会顺带实测输入MP4的时长。
 
-已经失败且退款的历史任务不会因升级自动重启、改状态或补扣。
+  插件用这些`gs://`副本组装Google请求。以下情况都在调用Google**之前**就失败，
+  不会产生费用：转存失败、结果不一致、延长输入不是1–30秒。
+  Data URI、multipart文件、`gs://`输入一律拒绝。
+- 转存时，渠道当前的Google令牌放在预检JSON**请求体**里（不放请求头）。
+  Worker只用它向Google写白名单桶，不存储、不回显。中央桶上的IAM写权限就是
+  转存授权，未授权的令牌无法写入，接口因此不会被外人滥用。
+- 所有成品都写入中央桶`gs://88api-omni-media/vertex-omni/<task_id>/`
+  （GCP项目`api-505117`，私有、2天自动删除、关闭软删除）。插件读不到渠道
+  自定义设置，所以桶名固定写在插件里，客户端不能覆盖（会拒绝`metadata.output_gcs_uri`）。
+  视频字节不经过NewAPI内存。
+- **跨项目权限**：Google读输入、写成品使用的是渠道项目的**Vertex服务代理**
+  `service-<项目号>@gcp-sa-aiplatform.iam.gserviceaccount.com`，而不是渠道服务账号本身
+  （实测：只给服务账号授权时报`storage.objects.get`被拒）。每个批量账号要在中央桶上
+  给两个身份授予objectCreator和objectViewer：服务代理（用于Google读写）和渠道服务
+  账号（用于转存）。用传输Worker目录下的`grant-omni-bucket.sh`批量补授权。
+  桶的IAM策略上限1500个成员，大约够700个账号。
+- 宿主拿到`storage.googleapis.com`结果地址后，按既有流程调用`/transfer`。Worker用
+  只读服务账号`omni-media-worker@api-505117`（无项目级角色，只有该桶的objectViewer）
+  把成品复制到R2。Worker不可用时，宿主回退为由NewAPI经插件内容请求中转。
+- 延长：Google每次固定追加约10秒（实测10.005–10.032秒），不接受duration
+  （传`"40s"`会报`Videos longer than 30s are not supported for extension`）。
+  输入须为1–30秒、可测时长的MP4；分辨率可选`720p`（默认）或`1080p`。
+  4K延长会在上游约5分钟后报`Internal error`，所以插件直接拒绝。
+  原片超过30秒时，由客户端截取末尾片段（建议10秒）后再延长。
+- **延长计费 = 实测成品时长 − 实测输入时长**，分辨率取实测成品。
+  这与Google的计量一致：10→20、20→30、30→40秒三次延长的输出token完全相同
+  （720p均为57,920）。提交时预扣11秒。客户端可选传`input_duration`，与实测相差
+  超过0.1秒时拒绝。
+- 成品时长来自Worker的只读探测：Google完成后，插件返回非终态95%并记录
+  `probe_uri`；下一轮查询请求`https://assets.88api.ai/gcs/probe?id=&uri=`（不携带Google凭据）。
+  Worker只用Range读取MP4头部，返回与Interaction同构的`outputs`和`facts`。探测失败
+  或结果不一致时返回UNKNOWN、继续轮询：不判失败、不退款、不按预估结算。
+- 多轮续接仍按完整成品时长计费（预扣40秒）。1.3.0以前提交的延长任务没有
+  `bill_added_seconds`标记，继续按完整时长结算，历史任务不补扣、不改价。
+- 返回给客户的是完整MP4。客户端自行拼接时，应保留原片完整内容，只取延长结果中
+  输入时长之后的部分接在后面。延长结果的前段是Google重新生成的，与原片相似度约0.985，
+  并非逐帧拷贝；直接用它替换原片尾段，会在接缝处产生音频突变。
 
 ### 协议与验证边界
 
@@ -107,38 +145,31 @@ Minimax-H3 与 XM-Video 的初始独立版本与当时88API镜像和生产自定
 - 普通参考最多10张图片、3段视频；首尾帧最多2图；edit/extend要求单段视频。
 - `temperature`（0–2）和`top_p`/`topP`（0–1）显式转发到generation_config。
   不支持独立音频输入，不再默默忽略这些已知字段。
-- 输入支持指定MIME的Data URI、multipart文件及`gs://`对象。图片20MiB，
-  视频64MiB；multipart还受宿主累计文件大小限制。
+- 1.3.0起输入只接受HTTP(S) URL（图片20MiB、视频64MiB），由预检转存到中央桶；
   支持PNG/JPEG/WebP/HEIC/HEIF图片和MP4/MOV/WebM视频。
-- **暂不支持HTTP(S)输入URL或无MIME的裸Base64**。宿主当前没有提供此
-  插件可直接复用的安全下载/媒体时长预检接口，不能把Google对gs://的
-  支持当作任意HTTPS URL可用。assets站链接须先由客户端转为Data URI、
-  文件或GCS对象。普通参考视频及文件/GCS的实际输入时长由Google校验。
+  不接受Data URI、multipart文件或`gs://`。
 - 顶层或`metadata.previous_interaction_id`支持继续Interaction，必须是Google ID，
   不是本站task_id；客户端须保留同账号/项目的上轮上下文。
   1.1.3继承前一轮模式，不再同时发送video_config.task（真实接口禁止此组合）；
   多轮不能再显式设置task或首尾帧模式，采样与输出格式控制仍独立保留。
-  1.1.4开始，多轮任务也按最终内联MP4完整电影时长结算；预扣上限40秒，
+  1.1.4开始，多轮任务也按最终MP4完整电影时长结算；预扣上限40秒，
   成功后用mvhd实测值覆盖，不改变发给Google的请求duration。
-  普通非多轮任务可选`metadata.output_gcs_uri`，要求服务账号有相应存储权限；
-  多轮完整时长计费需要内联MP4，因此不接受该输出URI设置。
+  1.3.0起成品统一走GCS交付，时长由Worker探测MP4头部得到。
 - edit/extend不能指定比例或size，避免Google真实400；edit默认使用最小输出格式，
   显式分辨率写入resolution。官方编辑示例写成output，但真实接口明确拒绝
   `Unknown parameter 'output' at 'response_format[0]'`；1.1.1据实修正，
   不照抄文档错误，也不在已受理生成后自动重试。普通生成才发送duration/aspect_ratio。
-- **延长计费为成品完整时长，不是新增时长。** 请求duration是预扣估计，
-  不冒充任意精确最终时长控制；省略时预扣40秒，完成后按MP4电影时间轴mvhd
-  实测总秒数（保留毫秒）结算。3秒原片延长成6秒，按6秒重新计费；
-  成品实际9.024秒则按9.024秒，而不是3秒、请求估计6秒或其中一条短轨道。
+- 1.1.x–1.2.0的延长按成品完整时长计费（预扣40秒）；
+  **1.3.0改为按新增秒数计费**，见上文。两者都以MP4电影时间轴mvhd
+  （保留毫秒）为准，不采信客户端提示，也不把token换算为秒数。
   价格及组倍率仍由宿主执行，本仓库不写售价。
 - **多轮续接计费同样按新成品完整时长。** 旧任务没有该状态标记，
   保留历史请求秒数计费；新任务预扣40秒，完成后按完整MP4结算。
 - 1.1.2容纳已实测的40秒视频轨+40.363秒完整MP4音频尾差：
   视频轨仍受40秒（0.1秒元数据容差）约束，完整电影时长额外限制在41秒内，
   不因正常编码尾差误拒绝，也不放开任意时长或把尾差直接抹掉不收费。
-- 延长仅接受单段输入；内联MP4会校验1–30秒。输出需要内联可测时长的MP4，
-  因此extend和多轮不允许output_gcs_uri；不会猜测URI视频时长或把token换算为秒数。
-  不可测量的成品返回UNKNOWN等待核验，不按预估量伪装成功。
+- 延长仅接受单段输入，MP4需在1–30秒之间。不可测量的成品返回UNKNOWN
+  等待核验，不按预估量伪装成功。
 - 普通非多轮生成/编辑保持请求秒数计费；延长与新多轮覆盖完成usage。
   旧任务无extend状态或新多轮计费标记，不会因插件升级改变原计费。
   回调宿主接线问题不在本插件更新中解决。
@@ -156,12 +187,11 @@ Minimax-H3 与 XM-Video 的初始独立版本与当时88API镜像和生产自定
 
 ### 结果、安装与复盘门禁
 
-内联视频通过轮询交给宿主现有视频缓存/私有存储流程；插件返回的提交快照
-不保存素材、thought内容或Base64。轮询快照由宿主保存并移除媒体字节，
-可能仍含上游thought元数据；插件的公开呈现器不回显这些内容。
-必须在测试宿主开启视频对象缓存，
-否则内联结果的持久读取不可保证。JSON提交读取上限为1MiB；
-若Google不遵守后台请求而直接返回大型内联成品，现有宿主会拒绝该响应。
+成品以GCS地址交给宿主现有的视频缓存流程（`/transfer` Worker → R2）；
+插件返回的提交快照不保存素材、thought内容或Base64。轮询快照可能仍含
+上游thought或分镜文本元数据（10s 4K实测有253个文本步骤，约3KB），
+插件的公开呈现器不回显这些内容。必须在宿主开启视频对象缓存并配置
+传输Worker，否则成品会在每次下载时由NewAPI经OAuth中转。
 插件不会绕过宿主上限或自动重新生成。
 
 GCS成品从固定`storage.googleapis.com` JSON下载入口读取并附Google OAuth；
