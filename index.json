@@ -490,20 +490,23 @@
         "zh": "使用服务账号鉴权、GCS 交付的 Vertex 视频适配器（Omni 1.1、Omni Flash、Veo 3.1、Veo 3.1 Fast）"
       },
       "models": [
-        "vertex-omni-1.1-test",
-        "vertex-omni-flash-test",
-        "vertex-veo-3.1-test",
-        "vertex-veo-3.1-fast-test",
         "veo-3.1",
         "veo-3.1-fast",
-        "gemini-omni-flash",
-        "gemini-omni-flash-1.1"
+        "gemini-omni-flash-1.1",
+        "gemini-omni-flash"
       ],
       "protocols": [
         "openai_video"
       ],
-      "latest": "1.5.0",
+      "latest": "1.6.0",
       "versions": [
+        {
+          "version": "1.6.0",
+          "path": "plugins/vertex-omni/1.6.0/plugin.js",
+          "sha256": "577286640e04dc6150e9dd6f5bf1a5e022cc58d61dfc8d64a4e42e91cb561f90",
+          "minApiVersion": 1,
+          "kind": "task"
+        },
         {
           "version": "1.5.0",
           "path": "plugins/vertex-omni/1.5.0/plugin.js",
