@@ -249,6 +249,28 @@
       ]
     },
     {
+      "key": "h3-video",
+      "name": "H3-Video",
+      "description": {
+        "en": "MiniMax H3 video integration",
+        "zh": "MiniMax H3 视频集成"
+      },
+      "models": [],
+      "protocols": [
+        "openai_video"
+      ],
+      "latest": "1.0.0",
+      "versions": [
+        {
+          "version": "1.0.0",
+          "path": "plugins/h3-video/1.0.0/plugin.js",
+          "sha256": "f1c375a5a90273760565bb4bd032fb683ee5ddfeb2dc28378c4a2ef56dfc8772",
+          "minApiVersion": 1,
+          "kind": "task"
+        }
+      ]
+    },
+    {
       "key": "minimax-h3",
       "name": "Minimax-H3",
       "description": {
