@@ -124,7 +124,7 @@ test('valid requests, identities, idempotency and usage match the 2.0.0 baseline
   const source = (await readFile(new URL('./fixtures/minimax-h3-2.0.0.js', import.meta.url), 'utf8')).replace(/\r\n/g, '\n')
   assert.equal(createHash('sha256').update(source).digest('hex'), '265d05def143b2e16dd0b24dbdaa500ef23e3be032bad6d056c58148d725473c')
   const { version: _, ...metadata } = plugin.meta
-  const { version: __, ...oldMetadata } = old.meta
+  const { version: __, usageExamples: ___, ...oldMetadata } = old.meta
   assert.deepEqual(metadata, oldMetadata)
   for (const model of ['MiniMax-H3', 'minimax-h3-768p', 'dmc-minimax-h3']) {
     for (const input of [
@@ -152,6 +152,12 @@ test('valid requests, identities, idempotency and usage match the 2.0.0 baseline
   const generic = { ...driver({ duration: 22, ratio: '21:9', resolution: '1080p' }), upstreamModel: 'future-model' }
   assert.deepEqual(plugin.buildSubmitRequest(generic), old.buildSubmitRequest(generic))
   assert.deepEqual(plugin.extractUsage(generic), old.extractUsage(generic))
+})
+
+test('2.0.3 publishes no model-square price examples', () => {
+  assert.equal(plugin.meta.version, '2.0.3')
+  assert.equal('usageExamples' in plugin.meta, false)
+  assert.deepEqual(Object.keys(plugin.meta.usageSchema), ['seconds'])
 })
 
 test('polling, terminal progress, download and historical task rendering stay compatible', () => {
