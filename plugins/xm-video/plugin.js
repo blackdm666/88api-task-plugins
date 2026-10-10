@@ -7,6 +7,7 @@ const RESOLUTIONS = ["480p", "720p", "768p", "1080p", "2k", "4k"];
 // quality spelling the upstream expects. Adding an upstream resolution is one
 // tier here plus one branch in the series price expression.
 const MODEL_CONFIGS = {};
+const SERIES = [];
 function tier(key, upstream, quality) {
   if (!RESOLUTIONS.includes(key)) throw new Error("undeclared resolution tier " + key);
   return { key: key, upstream: upstream, quality: quality || key };
@@ -19,7 +20,7 @@ function addModel(name, tiers, overrides, fixed) {
     generateAudio: false, visualWithAudio: false, totalMedia: 0 }, overrides);
 }
 // The first tier is the default when a request names no resolution.
-function addSeries(name, tiers, overrides) { addModel(name, tiers, overrides, false); }
+function addSeries(name, tiers, overrides) { SERIES.push(name); addModel(name, tiers, overrides, false); }
 function addFixed(name, series, key) {
   const cfg = MODEL_CONFIGS[series];
   MODEL_CONFIGS[name] = Object.assign({}, cfg, { tiers: cfg.tiers.filter(function (t) { return t.key === key; }), fixed: true });
@@ -62,25 +63,34 @@ for (const key of ["480p", "720p", "1080p"]) {
 addModel("minimax-h3-768p", [tier("768p", "minimax-h3-768p")], { defaultDuration: 4,
   ratios: ["1:1", "16:9", "9:16"], maxPrompt: 2500, images: 10, videos: 5,
   audios: 5, visualWithAudio: true }, true);
+function usageSchema(keys) {
+  return {
+    seconds: { type: "number", unit: "second", description: { en: "Video generation unit price", zh: "视频生成单价" } },
+    resolution: {
+      enum: keys,
+      enumLabels: Object.fromEntries(keys.map(function (key) { return [key, { en: key.toUpperCase(), zh: key.toUpperCase() }]; })),
+      description: { en: "Output video resolution", zh: "输出视频分辨率" },
+    },
+  };
+}
 export const meta = {
   apiVersion: 1,
   key: "xm-video",
   name: "XM-Video",
-  version: "3.1.0",
+  version: "3.2.0",
   author: { name: "88API" },
   description: { en: "88API channel integration plugin", zh: "88API渠道集成插件" },
-  models: [],
+  // Series names are declared only so each can carry its own resolution enum;
+  // the model square lists exactly the tiers a series sells. Legacy fixed
+  // names and future channel models stay dynamic on the superset schema.
+  models: SERIES.slice(),
   dynamicModels: true,
   fetchMode: "per_task",
   protocols: ["openai_video"],
-  usageSchema: {
-    seconds: { type: "number", unit: "second", description: { en: "Video generation unit price", zh: "视频生成单价" } },
-    resolution: {
-      enum: RESOLUTIONS,
-      enumLabels: Object.fromEntries(RESOLUTIONS.map(function (key) { return [key, { en: key.toUpperCase(), zh: key.toUpperCase() }]; })),
-      description: { en: "Output video resolution", zh: "输出视频分辨率" },
-    },
-  },
+  usageSchema: usageSchema(RESOLUTIONS),
+  usageProfiles: SERIES.map(function (name) {
+    return { models: [name], schema: usageSchema(MODEL_CONFIGS[name].tiers.map(function (t) { return t.key; })) };
+  }),
 };
 
 function object(value) { return value && typeof value === "object" && !Array.isArray(value) ? value : {}; }

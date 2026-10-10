@@ -60,6 +60,24 @@ if (xinmengTestSource.includes(legacyError)) {
 } else if (!xinmengTestSource.includes(friendlyError)) {
   throw new Error('Pinned host XinMeng test no longer has the expected media-limit assertion')
 }
+// xm-video 3.2.0 declares its series names so each carries a per-model
+// resolution enum (usageProfiles must name declared models). The pinned host
+// asserts the factory copy claims nothing; pin the exact claim list instead so
+// it still cannot shadow another plugin's alias such as minimax-h3-768p.
+const xmSeries = '[]string{"SD2.5", "SD2.0", "kling-3.0-turbo", "seedance-2.0-mini官方版", "seedance-2.5官方版", "seedance-2.0官方版", "seedance-2.0-fast官方版"}'
+for (const [file, subject] of [
+  [path.join(host, 'pkg', 'jsplugin', 'xinmeng_video_test.go'), 'plugin'],
+  [path.join(host, 'plugins', 'builtin_plugins_test.go'), 'xinmeng'],
+]) {
+  const empty = `assert.Empty(t, ${subject}.Meta.Models)`
+  const series = `assert.Equal(t, ${xmSeries}, ${subject}.Meta.Models)`
+  const testSource = await readFile(file, 'utf8')
+  if (testSource.includes(empty)) {
+    await writeFile(file, testSource.replace(empty, series))
+  } else if (!testSource.includes(series)) {
+    throw new Error(`Pinned host test ${path.basename(file)} no longer has the expected XM-Video model assertion`)
+  }
+}
 await mkdir(path.join(host, 'web', 'dist'), { recursive: true })
 await writeFile(path.join(host, 'web', 'dist', 'index.html'), '<!doctype html><title>Host contract test</title>\n')
 console.log(`Prepared ${lock.plugins.length} plugin sources in the isolated host checkout`)
