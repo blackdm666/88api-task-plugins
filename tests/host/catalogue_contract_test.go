@@ -43,6 +43,16 @@ func TestIndependentPluginCatalogue(t *testing.T) {
 			require.NotEmpty(t, item.Versions)
 			assert.Equal(t, item.Latest, item.Versions[0].Version)
 			assert.Equal(t, fmt.Sprintf("%x", sha256.Sum256([]byte(source))), item.Versions[0].SHA256)
+			// Usage examples render as a "price examples" table on the model
+			// square. Only token-unit schemas keep them, because the host
+			// requires at least one there.
+			schemas := []UsageProfile{{Schema: plugin.Meta.UsageSchema, Examples: plugin.Meta.UsageExamples}}
+			schemas = append(schemas, plugin.Meta.UsageProfiles...)
+			for index, profile := range schemas {
+				if !usageSchemaHasTokenUnit(profile.Schema) {
+					assert.Empty(t, profile.Examples, "usage profile %d", index)
+				}
+			}
 		})
 	}
 }

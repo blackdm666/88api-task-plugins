@@ -290,6 +290,13 @@ not alter request handling or task billing.
 
 ## Grok Video
 
+`grok-video@1.2.1` drops its `usageExamples`, so the model-square detail page
+no longer shows a "价格示例" table and the card loses its `8s · 480p ≈` line.
+The per-resolution schemas, request handling and billing are unchanged.
+`minimax-h3@2.0.3` drops its examples the same way. `sdgo-video` and
+`gx-video` bill a token-unit `upstreamUnits` field; the host requires at least
+one example for such schemas, so hiding theirs needs a NewAPI frontend change.
+
 `grok-video@1.2.0` reads `ratio` and `metadata.ratio` as aliases of
 `aspect_ratio`; 1.1.2 ignored them and silently generated 16:9. When an alias
 is present, `aspect_ratio`, a ratio-valued `size`, `metadata.aspect_ratio` and

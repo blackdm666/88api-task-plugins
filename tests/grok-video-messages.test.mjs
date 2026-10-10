@@ -187,8 +187,17 @@ test("resolves relative result URLs without relying on unavailable URL global", 
   assert.equal(result.url, "https://sub.example.invalid/videos/task_fixture.mp4")
 })
 
-test("1.2.0 reads ratio as an alias of aspect_ratio", () => {
-  assert.equal(plugin.meta.version, "1.2.0")
+test("1.2.1 publishes no model-square price examples", () => {
+  assert.equal(plugin.meta.version, "1.2.1")
+  assert.equal("usageExamples" in plugin.meta, false)
+  assert.equal(plugin.meta.usageProfiles.length, 2)
+  for (const profile of plugin.meta.usageProfiles) assert.equal("examples" in profile, false)
+  assert.deepEqual(plugin.meta.usageProfiles.map((profile) => profile.schema),
+    old.meta.usageProfiles.map((profile) => profile.schema))
+  assert.deepEqual(plugin.meta.usageSchema, old.meta.usageSchema)
+})
+
+test("ratio is read as an alias of aspect_ratio", () => {
   assert.equal(decode({ ratio: "9:16" }).requestBody.aspect_ratio, "9:16")
   assert.equal(decode({ metadata: { ratio: "1:1" } }).requestBody.aspect_ratio, "1:1")
   assert.equal(decode({ ratio: "3:4", aspect_ratio: "3:4", size: "3:4" }).requestBody.aspect_ratio, "3:4")
@@ -205,7 +214,7 @@ test("1.2.0 reads ratio as an alias of aspect_ratio", () => {
   }).body.aspect_ratio, "9:16")
 })
 
-test("1.2.0 rejects conflicting or unsupported ratio aliases in Chinese", () => {
+test("rejects conflicting or unsupported ratio aliases in Chinese", () => {
   for (const input of [
     { ratio: "9:16", aspect_ratio: "16:9" },
     { ratio: "9:16", size: "16:9" },

@@ -25,17 +25,8 @@ function usageSchema(resolutions) {
   };
 }
 
-function usageExamples(resolutions) {
-  return resolutions.map((resolution) => ({
-    label: `8s · ${resolution}`,
-    facts: { seconds: 8, resolution },
-  }));
-}
-
 const DEFAULT_USAGE_SCHEMA = usageSchema(RESOLUTIONS);
-const DEFAULT_USAGE_EXAMPLES = usageExamples(RESOLUTIONS);
 const BASE_USAGE_SCHEMA = usageSchema(BASE_RESOLUTIONS);
-const BASE_USAGE_EXAMPLES = usageExamples(BASE_RESOLUTIONS);
 
 function object(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
@@ -276,7 +267,7 @@ export const meta = {
   apiVersion: 1,
   key: "grok-video",
   name: "Grok Video",
-  version: "1.2.0",
+  version: "1.2.1",
   author: { name: "88API" },
   description: {
     en: "Grok Imagine Video through the Sub2API video task API",
@@ -292,17 +283,14 @@ export const meta = {
   // Unknown dynamic models use the superset profile. Model-specific profiles
   // below prevent the base model from advertising unsupported 1080p.
   usageSchema: DEFAULT_USAGE_SCHEMA,
-  usageExamples: DEFAULT_USAGE_EXAMPLES,
   usageProfiles: [
     {
       models: [BASE_MODEL],
       schema: BASE_USAGE_SCHEMA,
-      examples: BASE_USAGE_EXAMPLES,
     },
     {
       models: [MODEL],
       schema: DEFAULT_USAGE_SCHEMA,
-      examples: DEFAULT_USAGE_EXAMPLES,
     },
   ],
 };
