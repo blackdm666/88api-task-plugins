@@ -6,7 +6,7 @@ export const meta = {
     en: "88API channel integration plugin",
     zh: "88API渠道集成插件",
   },
-  version: "2.0.2",
+  version: "2.0.3",
   author: { name: "88API" },
   // Internal routing identity. The DMC upstream model remains MiniMax-H3 in
   // buildSubmitRequest; keeping the registry name unique lets this plugin
@@ -22,11 +22,6 @@ export const meta = {
       description: { en: "Video generation unit price", zh: "视频生成单价" },
     },
   },
-  usageExamples: [
-    { label: "768P 1s", facts: { seconds: 1 } },
-    { label: "768P 5s", facts: { seconds: 5 } },
-    { label: "768P 15s", facts: { seconds: 15 } },
-  ],
 };
 
 const MODEL = "MiniMax-H3";
