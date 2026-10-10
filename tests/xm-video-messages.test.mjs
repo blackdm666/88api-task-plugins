@@ -80,6 +80,29 @@ test('task errors preserve provider evidence and avoid duplicate submission advi
   assert.match(plugin.protocols.openai_video.render({}, { status: 'FAILURE' }).error.message, /视频生成失败/)
 })
 
+test('provider-internal failures become a generic busy message; everything else is unchanged', () => {
+  const busy = '生成服务繁忙，任务未能完成，请稍后重试。'
+  for (const message of [
+    '上游任务失败: task failed with status: FAIL, message: JsonDecode response failed',
+    'task_failed: Upstream submit failed (429): {"error":{"message":"Request rate limit exceeded for this API key","type":"rate_limit_error","code":"rate_limit_exceeded"}}',
+    'task_failed: Upstream submit failed (503): upstream unavailable',
+    '<html>\n<head><title>502 Bad Gateway</title></head>\n<body>\n<center><h1>502 Bad Gateway</h1></center>\n<hr><center>nginx</center>\n</body>\n</html>\n',
+  ]) {
+    assert.equal(plugin.parseTaskResult({}, { status: 'failed', error: { message } }).reason, busy)
+    assert.throws(() => plugin.parseSubmitResponse({}, { body: { status: 'failed', error: { message } } }), { message: busy })
+    assert.equal(plugin.protocols.openai_video.render({}, { status: 'FAILURE', fail_reason: message }).error.message, busy)
+  }
+  // Content review and parameter errors (including the provider prefix) are not part of this change.
+  for (const message of [
+    '上游任务失败: Input Prompt violates policy',
+    '上游任务失败: task failed with status: FAIL, message: The request failed because the output video may contain sensitive information',
+    'task_failed: Upstream submit failed (400): {"error":{"message":"The specified asset is not found"}}',
+  ]) {
+    assert.equal(plugin.parseTaskResult({}, { status: 'failed', error: { message } }).reason, message)
+    assert.deepEqual(plugin.parseTaskResult({}, { status: 'failed', error: { message } }), old.parseTaskResult({}, { status: 'failed', error: { message } }))
+  }
+})
+
 test('valid requests, billing and task results are identical to deployed 3.0.3', async () => {
   // Archived 3.0.3 from source commit 7753c2b; usable on shallow CI checkouts.
   const oldSource = (await readFile(new URL('./fixtures/xm-video-3.0.3.js', import.meta.url), 'utf8')).replace(/\r\n/g, '\n')
