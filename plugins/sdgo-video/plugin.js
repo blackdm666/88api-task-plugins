@@ -97,7 +97,7 @@ export const meta = {
   apiVersion: 1,
   key: "sdgo-video",
   name: "SD-Video",
-  version: "1.2.0",
+  version: "1.2.1",
   author: { name: "88API" },
   description: {
     en: "Seedance video generation through the SDGO OpenAI-compatible task API",
@@ -364,14 +364,11 @@ const COMPATIBILITY_KEYS = new Set([
   "referenceImages", "reference_images", "referenceVideos", "reference_videos",
   "referenceAudios", "reference_audios", "firstFrame", "first_frame", "lastFrame",
   "last_frame", "seconds", "duration", "quality", "vquality", "aspect_ratio",
-  "outputFormat", "generateAudio", "omniReferenceTaskType",
+  "outputFormat", "generateAudio", "omniReferenceTaskType", "callback_url",
   "__sdgo_auto_duration",
 ]);
 
 function copyForwardFields(body, all) {
-  // Preserve provider-native fields verbatim. In particular, callback_url is
-  // supplied by the caller and must reach SDGO/Ark unchanged; it is not a
-  // NewAPI callback endpoint and must not be rewritten by this adapter.
   for (const [key, value] of Object.entries(all)) {
     if (!COMPATIBILITY_KEYS.has(key) && key !== "model" && body[key] === undefined) body[key] = value;
   }
@@ -383,6 +380,11 @@ function payloadFor(request, model, upstreamModel, options = {}) {
   const metadata = parseMetadata(req.metadata);
   // SDGO accepts legacy metadata, but documents metadata as taking precedence.
   const all = Object.assign({}, req, metadata);
+  // A forwarded callback would reach the caller from the provider with its own
+  // task IDs and media URLs instead of through NewAPI, so it is refused.
+  if (all.callback_url !== undefined && all.callback_url !== null && all.callback_url !== "") {
+    throw new Error("本接口不支持 callback_url 回调，请移除 callback_url，并通过查询任务接口轮询获取结果。");
+  }
   const upstream = first(upstreamModel, model);
   if (!upstream) throw new Error("model 是必填参数。");
   const cfg = modelConfig(upstream);

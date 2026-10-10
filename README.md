@@ -403,17 +403,22 @@ can be inlined by the NewAPI host for ordinary image input, but it does not
 replace SDGO's asset presign flow; local video files still need to be uploaded
 to SDGO first because the provider does not accept video Base64.
 Provider-native top-level fields outside the XM compatibility surface are
-forwarded unchanged, including `callback_url`; the adapter does not rewrite
-that callback to a NewAPI or Volcano endpoint. Site-compatible fields are
-still normalized so existing XM clients keep working.
+forwarded unchanged. Site-compatible fields are still normalized so existing
+XM clients keep working.
+Since 1.2.1 a non-empty `callback_url` (top-level, in `metadata` or as a
+multipart field) returns a 400 with "本接口不支持 callback_url 回调，请移除
+callback_url，并通过查询任务接口轮询获取结果。" and creates no task or charge;
+results are obtained by polling the task query endpoint. An empty or `null`
+`callback_url` is ignored and not forwarded. Up to 1.2.0 it was forwarded
+unchanged to the provider.
 Since 1.2.0 the singular fields `image` and `input_reference` are read as
 reference images, `video` as a reference video, and `audio` as reference
 audio, under the same limits as their list forms; 1.1.3 silently dropped them.
 A `size` holding a supported ratio (`9:16`) or tier (`1080p`) is used as
 `ratio` or `resolution` and is no longer forwarded, and a `size` that
 contradicts an explicit ratio or resolution returns a 400. Pixel sizes such as
-`1280x720` and `callback_url` are still forwarded unchanged. Requests without
-those inputs are asserted identical to the archived production 1.1.3.
+`1280x720` are still forwarded unchanged. Requests without those inputs or a
+`callback_url` are asserted identical to the archived production 1.1.3.
 Media supplied to the official endpoint must be reachable by both SDGO and
 the upstream Ark service. The plugin does not put API keys or channel
 configuration in this repository.

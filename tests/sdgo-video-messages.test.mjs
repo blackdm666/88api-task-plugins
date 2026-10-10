@@ -20,7 +20,7 @@ function decode(value = {}, model = 'doubao-seedance-2-5-260628') {
 test('declares the SDGO dynamic plugin and official models remain discoverable', () => {
   assert.equal(plugin.meta.key, 'sdgo-video')
   assert.equal(plugin.meta.name, 'SD-Video')
-  assert.equal(plugin.meta.version, '1.2.0')
+  assert.equal(plugin.meta.version, '1.2.1')
   assert.deepEqual(plugin.meta.requiredCapabilities, ['task-preflight@1'])
   assert.equal(plugin.meta.dynamicModels, true)
   assert.deepEqual(plugin.meta.models, [
@@ -538,23 +538,25 @@ test('supports 1.0 frames and forwards future Ark fields', () => {
   assert.deepEqual(decoded.requestBody.tools, [{ type: 'web_search' }])
 })
 
-test('passes callback_url through unchanged for upstream delivery', () => {
+test('1.2.1 rejects callback_url in Chinese where earlier versions forwarded it upstream', () => {
   const callback_url = 'https://client.example.test/hooks/sdgo-task'
-  const decoded = decode({
-    prompt: 'Callback fixture',
-    duration: 8,
-    callback_url,
-  }, 'doubao-seedance-1-0-pro-250528')
-  assert.equal(decoded.requestBody.callback_url, callback_url)
+  const input = { prompt: 'Callback fixture', duration: 8, callback_url }
+  const forwarded = old.decodeRequest({ model: 'doubao-seedance-1-0-pro-250528', body: { kind: 'json', value: input } })
+  assert.equal(forwarded.requestBody.callback_url, callback_url)
+  const rejected = { message: '本接口不支持 callback_url 回调，请移除 callback_url，并通过查询任务接口轮询获取结果。' }
+  assert.throws(() => decode(input, 'doubao-seedance-1-0-pro-250528'), rejected)
+  assert.throws(() => decode({ metadata: { callback_url } }), rejected)
+  assert.throws(() => plugin.decodeRequest({
+    model: 'doubao-seedance-2-5-260628',
+    body: { kind: 'multipart', fields: { prompt: ['Multipart fixture'], callback_url: [callback_url] } },
+  }), rejected)
+  assert.throws(() => submit({ model: 'doubao-seedance-2-5-260628', requestBody: { prompt: 'Fixture prompt', callback_url } }), rejected)
 
-  const submitted = plugin.buildSubmitRequest({
-    baseUrl: 'https://sdgo.top/api/v3',
-    apiKey: 'fixture-key',
-    model: 'doubao-seedance-1-0-pro-250528',
-    upstreamModel: 'doubao-seedance-1-0-pro-250528',
-    requestBody: decoded.requestBody,
-  })
-  assert.equal(submitted.body.callback_url, callback_url)
+  for (const empty of [null, '']) {
+    const decoded = decode({ callback_url: empty })
+    assert.equal(decoded.requestBody.callback_url, undefined)
+    assert.equal(submit(decoded).body.callback_url, undefined)
+  }
 })
 
 function submit(decoded) {
@@ -645,7 +647,7 @@ test('1.2.0 rejects size values that conflict with or are unsupported by the mod
   assert.throws(() => decode({ size: '16:9', firstFrame: image }), /必须使用 adaptive/)
 })
 
-test('requests without singular media or a ratio/resolution size are identical to deployed 1.1.3', async () => {
+test('requests without singular media, a ratio/resolution size or callback_url are identical to deployed 1.1.3', async () => {
   const source = (await readFile(new URL('./fixtures/sdgo-video-1.1.3.js', import.meta.url), 'utf8')).replace(/\r\n/g, '\n')
   // Production task_plugins sdgo-video 1.1.3 source_hash, checked 2026-10-10.
   assert.equal(createHash('sha256').update(source).digest('hex'), 'fe92c3bee679e8b80b9c02f18dfae7fe9faa335ed1aa4b6347af028cd7c75b9e')
@@ -667,7 +669,7 @@ test('requests without singular media or a ratio/resolution size are identical t
     { duration: -1, videos: [video] },
     { referenceVideos: ['asset://video-asset-1'], omniReferenceTaskType: 'edit' },
     { content: [{ type: 'text', text: 'Content fixture' }, { type: 'image_url', role: 'reference_image', image_url: { url: image } }] },
-    { callback_url, generateAudio: false, service_tier: 'flex' },
+    { generateAudio: false, service_tier: 'flex' },
     { resolution: '4k' },
     { duration: 3 },
     { lastFrame: lastImage },

@@ -18,7 +18,7 @@ func TestIndependentPluginCatalogueSDGOVideoContract(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "sdgo-video", plugin.Meta.Key)
 	assert.Equal(t, "SD-Video", plugin.Meta.Name)
-	assert.Equal(t, "1.2.0", plugin.Meta.Version)
+	assert.Equal(t, "1.2.1", plugin.Meta.Version)
 	assert.True(t, plugin.Meta.DynamicModels)
 	assert.Equal(t, []string{
 		"doubao-seedance-2-0-mini-260615",
@@ -114,6 +114,14 @@ func TestIndependentPluginCatalogueSDGOVideoContract(t *testing.T) {
 			}},
 		})
 	require.ErrorContains(t, err, "画幅比例参数不一致")
+	_, err = plugin.Engine.CallPath(context.Background(), "protocols",
+		[]string{"openai_video", "decodeRequest"}, map[string]any{
+			"model": "doubao-seedance-2-5-260628",
+			"body": map[string]any{"kind": "json", "value": map[string]any{
+				"prompt": "Callback fixture", "callback_url": "https://client.example.test/hooks/sdgo-task",
+			}},
+		})
+	require.ErrorContains(t, err, "本接口不支持 callback_url 回调")
 
 	value, err := plugin.Engine.Call(context.Background(), "buildSubmitRequest", map[string]any{
 		"model": "doubao-seedance-2-5-260628",
