@@ -99,6 +99,7 @@ func TestXinMengSD20FourKMappedSales(t *testing.T) {
 	require.NoError(t, err)
 	plugin, err := NewRegistry().Register(string(source), Options{})
 	require.NoError(t, err)
+	sales := "SD2.0 4K"
 	submit := func(input map[string]any) (map[string]any, map[string]any, error) {
 		t.Helper()
 		value := map[string]any{"prompt": "Fixture"}
@@ -106,13 +107,13 @@ func TestXinMengSD20FourKMappedSales(t *testing.T) {
 			value[key] = item
 		}
 		decoded, err := plugin.Engine.Call(context.Background(), "decodeRequest", map[string]any{
-			"model": "SD2.0 4k", "body": map[string]any{"kind": "json", "value": value},
+			"model": sales, "body": map[string]any{"kind": "json", "value": value},
 		})
 		if err != nil {
 			return nil, nil, err
 		}
 		driver := map[string]any{
-			"model": "SD2.0 4k", "upstreamModel": "lltai-vs-2.0",
+			"model": sales, "upstreamModel": "lltai-vs-2.0",
 			"requestBody": decoded.(map[string]any)["requestBody"], "baseUrl": "https://example.invalid",
 		}
 		request, err := plugin.Engine.Call(context.Background(), "buildSubmitRequest", driver)
@@ -158,6 +159,13 @@ func TestXinMengSD20FourKMappedSales(t *testing.T) {
 		_, _, err := submit(tc.input)
 		assert.ErrorContains(t, err, tc.want)
 	}
+
+	// Tasks created under the former lowercase sales name keep the 4K tier.
+	sales = "SD2.0 4k"
+	body, usage, err = submit(map[string]any{"duration": 6, "resolution": "480p"})
+	require.NoError(t, err)
+	assert.Equal(t, "4K", body["resolution"])
+	assert.EqualValues(t, 6, usage["seconds"])
 }
 
 func TestXinMengFriendlyMessages(t *testing.T) {

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import * as plugin from '../plugins/xm-video/plugin.js'
 
-const model = 'SD2.0 4k'
+const model = 'SD2.0 4K'
 const refs = n => Array(n).fill('https://example.invalid/media')
 
 function submit(input = {}, name = model, upstreamModel = 'lltai-vs-2.0') {
@@ -17,7 +17,7 @@ function submit(input = {}, name = model, upstreamModel = 'lltai-vs-2.0') {
   return { decoded, body: plugin.buildSubmitRequest(ctx).body, usage: plugin.extractUsage(ctx) }
 }
 
-test('SD2.0 4k: fixed upstream 4K quality and frozen billing quantity', () => {
+test('SD2.0 4K: fixed upstream 4K quality and frozen billing quantity', () => {
   for (const duration of [4, 5, 10, 15]) {
     const { body, usage } = submit({
       duration, resolution: '480p', quality: '1080p', metadata: { resolution: '720p', vquality: '480p' },
@@ -36,7 +36,7 @@ test('SD2.0 4k: fixed upstream 4K quality and frozen billing quantity', () => {
   assert.equal(submit({ seconds: '12' }).usage.seconds, 12)
 })
 
-test('SD2.0 4k: duration and ratio limits match the other SD2.0 tiers', () => {
+test('SD2.0 4K: duration and ratio limits match the other SD2.0 tiers', () => {
   for (const duration of [3, 16, 30, 4.5, -1]) {
     assert.throws(() => submit({ duration }), /视频时长/)
   }
@@ -49,7 +49,7 @@ test('SD2.0 4k: duration and ratio limits match the other SD2.0 tiers', () => {
   assert.throws(() => submit({ ratio: '2:1' }), /当前模型不支持该画幅比例，请选择：16:9、9:16、1:1、4:3、3:4、21:9/)
 })
 
-test('SD2.0 4k: reference limits, frame exclusivity, audio switch and promptless media', () => {
+test('SD2.0 4K: reference limits, frame exclusivity, audio switch and promptless media', () => {
   const full = { referenceImages: refs(9), referenceVideos: refs(3) }
   assert.deepEqual(submit(full).body.referenceImages, full.referenceImages)
   assert.throws(() => submit({ images: refs(10) }), /参考图片.*9 张/)
@@ -67,6 +67,16 @@ test('SD2.0 4k: reference limits, frame exclusivity, audio switch and promptless
   }
   assert.doesNotThrow(() => submit({ prompt: '', images: refs(1) }))
   assert.throws(() => submit({ prompt: '' }), /请输入提示词，或添加/)
+})
+
+test('SD2.0 4k: tasks under the former lowercase sales name stay fixed 4K', () => {
+  const { decoded, body, usage } = submit({ duration: 6, resolution: '480p' }, 'SD2.0 4k')
+  assert.equal(decoded.model, 'SD2.0 4k')
+  assert.equal(body.model, 'lltai-vs-2.0')
+  assert.equal(body.resolution, '4K')
+  assert.equal(body.ratio, '1:1')
+  assert.equal(usage.seconds, 6)
+  assert.throws(() => submit({ duration: 16 }, 'SD2.0 4k'), /视频时长需在 4 到 15 秒之间/)
 })
 
 test('existing SD2.0 tiers keep their lowercase upstream quality', () => {
