@@ -200,6 +200,26 @@ func TestIndependentPluginCatalogueVertexOmniHTTP(t *testing.T) {
 	}
 }
 
+// The model square renders one price column per enum value; Omni Flash only
+// accepts 720p and must not advertise the shared 1080p/4k columns.
+func TestIndependentPluginCatalogueVertexOmniUsageProfiles(t *testing.T) {
+	source, err := os.ReadFile("../../../../../plugins/vertex-omni/plugin.js")
+	require.NoError(t, err)
+	plugin, err := pluginruntime.NewRegistry().Register(string(source), pluginruntime.Options{})
+	require.NoError(t, err)
+	for model, expected := range map[string][]string{
+		"gemini-omni-flash":     {"720p"},
+		"gemini-omni-flash-1.1": {"720p", "1080p", "4k"},
+		"veo-3.1":               {"720p", "1080p", "4k"},
+		"veo-3.1-fast":          {"720p", "1080p", "4k"},
+	} {
+		schema, _ := plugin.Meta.UsageForModels("upstream-id", model)
+		assert.Equal(t, expected, schema["resolution"].Enum, model)
+		assert.Contains(t, schema, "seconds", model)
+		assert.Contains(t, schema, "generate_audio", model)
+	}
+}
+
 func TestIndependentPluginCatalogueVertexOmniCapabilitiesAndExtensionUsage(t *testing.T) {
 	source, err := os.ReadFile("../../../../../plugins/vertex-omni/plugin.js")
 	require.NoError(t, err)

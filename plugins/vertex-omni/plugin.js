@@ -49,13 +49,30 @@ const PROBE_URL = "https://" + WORKER_HOST + "/gcs/probe";
 // One extension adds ~10s (10.005–10.032s verified); reserve, then settle.
 const EXTEND_RESERVE_SECONDS = 11;
 const EXTEND_MAX_INPUT_SECONDS = 30.1;
+function usageSchema(resolutions) {
+  return {
+    seconds: {
+      type: "number", unit: "second",
+      description: { en: "Video generation unit price", zh: "视频生成单价" },
+    },
+    resolution: {
+      enum: resolutions,
+      description: { en: "Output video resolution", zh: "输出视频分辨率" },
+    },
+    // Veo only: Google prices video with and without generated audio differently.
+    generate_audio: {
+      type: "boolean",
+      description: { en: "Whether audio is generated (Veo)", zh: "是否生成音频（Veo）" },
+    },
+  };
+}
 
 export const meta = {
   apiVersion: 1,
   key: "vertex-omni",
   name: "Vertex Video",
   icon: "VertexAI.Color",
-  version: "1.6.2",
+  version: "1.7.0",
   // HTTP(S) inputs are copied to GCS before submit; requires host preflight.
   requiredCapabilities: ["task-preflight@1"],
   author: { name: "88API", url: "https://github.com/blackdm666/88api-task-plugins" },
@@ -70,21 +87,11 @@ export const meta = {
   fetchMode: "per_task",
   auth: { type: "oauth2_jwt" },
   protocols: ["openai_video"],
-  usageSchema: {
-    seconds: {
-      type: "number", unit: "second",
-      description: { en: "Video generation unit price", zh: "视频生成单价" },
-    },
-    resolution: {
-      enum: BILLED_RESOLUTIONS,
-      description: { en: "Output video resolution", zh: "输出视频分辨率" },
-    },
-    // Veo only: Google prices video with and without generated audio differently.
-    generate_audio: {
-      type: "boolean",
-      description: { en: "Whether audio is generated (Veo)", zh: "是否生成音频（Veo）" },
-    },
-  },
+  usageSchema: usageSchema(BILLED_RESOLUTIONS),
+  // The model square lists one price column per enum value, so a model whose
+  // upstream accepts fewer resolutions must not inherit the shared enum.
+  usageProfiles: Object.keys(MODELS).filter(name => MODELS[name].resolutions && MODELS[name].resolutions.length < BILLED_RESOLUTIONS.length)
+    .map(name => ({ models: [name], schema: usageSchema(MODELS[name].resolutions) })),
 };
 
 function text(value) { return typeof value === "string" ? value.trim() : ""; }
