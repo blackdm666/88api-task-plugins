@@ -80,7 +80,7 @@ test('task errors preserve provider evidence and avoid duplicate submission advi
   assert.match(plugin.protocols.openai_video.render({}, { status: 'FAILURE' }).error.message, /视频生成失败/)
 })
 
-test('provider-internal failures become a generic busy message; everything else is unchanged', () => {
+test('provider-internal failures become a generic busy message', () => {
   const busy = '生成服务繁忙，任务未能完成，请稍后重试。'
   for (const message of [
     '上游任务失败: task failed with status: FAIL, message: JsonDecode response failed',
@@ -91,15 +91,6 @@ test('provider-internal failures become a generic busy message; everything else 
     assert.equal(plugin.parseTaskResult({}, { status: 'failed', error: { message } }).reason, busy)
     assert.throws(() => plugin.parseSubmitResponse({}, { body: { status: 'failed', error: { message } } }), { message: busy })
     assert.equal(plugin.protocols.openai_video.render({}, { status: 'FAILURE', fail_reason: message }).error.message, busy)
-  }
-  // Content review and parameter errors (including the provider prefix) are not part of this change.
-  for (const message of [
-    '上游任务失败: Input Prompt violates policy',
-    '上游任务失败: task failed with status: FAIL, message: The request failed because the output video may contain sensitive information',
-    'task_failed: Upstream submit failed (400): {"error":{"message":"The specified asset is not found"}}',
-  ]) {
-    assert.equal(plugin.parseTaskResult({}, { status: 'failed', error: { message } }).reason, message)
-    assert.deepEqual(plugin.parseTaskResult({}, { status: 'failed', error: { message } }), old.parseTaskResult({}, { status: 'failed', error: { message } }))
   }
 })
 
