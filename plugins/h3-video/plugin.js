@@ -4,7 +4,8 @@
 //
 // The upstream owns every capability (resolutions, ratios, durations, media
 // limits, workflow combinations) and rejects invalid requests before creating a
-// task. This driver only translates fields and guarantees that the billed
+// task; 768P 3:2/2:3 is the one combination checked locally (see outputFor).
+// This driver only translates fields and guarantees that the billed
 // seconds and resolution are exactly the values sent upstream.
 const RESOLUTIONS = ["480p", "768p", "1080p", "2k", "4k"];
 
@@ -13,7 +14,7 @@ export const meta = {
   key: "h3-video",
   name: "H3-Video",
   description: { en: "MiniMax H3 video integration", zh: "MiniMax H3 视频集成" },
-  version: "1.0.2",
+  version: "1.0.3",
   author: { name: "88API" },
   models: [],
   dynamicModels: true,
@@ -157,6 +158,10 @@ function outputFor(req, metadata) {
   const size = sizeParts(present(req.size) ? req.size : metadata.size);
   const resolution = agreed([req.resolution, metadata.resolution, size.resolution, output.resolution], "分辨率", resolutionValue) || DEFAULT_RESOLUTION;
   const ratio = agreed([req.ratio, req.aspect_ratio, req.aspectRatio, metadata.ratio, metadata.aspect_ratio, metadata.aspectRatio, size.ratio, output.ratio], "画幅比例", ratioValue) || DEFAULT_RATIO;
+  // The upstream answers this combination with a generic "retry later" error instead of a parameter error.
+  if (resolution === "768p" && (ratio === "3x2" || ratio === "2x3")) {
+    throw new Error("768P 不支持 3:2 / 2:3 比例，请改用其他比例或分辨率。");
+  }
   return { resolution: resolution, ratio: resolution + "-" + ratio };
 }
 

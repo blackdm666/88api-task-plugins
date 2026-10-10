@@ -59,6 +59,26 @@ test('resolution and ratio come from the request; billed resolution always equal
   }
 })
 
+test('768P rejects 3:2 and 2:3 before quota with an actionable message', () => {
+  const message = '768P 不支持 3:2 / 2:3 比例，请改用其他比例或分辨率。'
+  for (const input of [
+    { resolution: '768p', ratio: '3:2' }, { resolution: '768P', aspect_ratio: '2:3' }, { output: { ratio: '768p-3x2' } },
+    { resolution: '768p', size: '1152x768' }, { resolution: '768p', metadata: { aspectRatio: '2x3' } },
+  ]) {
+    assert.throws(() => decode(input), { message }, JSON.stringify(input))
+    assert.throws(() => submit(input), { message }, JSON.stringify(input))
+    assert.throws(() => plugin.extractUsage({ ...driver(), requestBody: { prompt: 'Fixture', ...input } }), { message })
+  }
+  // Supported neighbours keep reaching the upstream unchanged.
+  for (const [input, ratio] of [
+    [{ resolution: '768p', ratio: '16:9' }, '768p-16x9'], [{ resolution: '768p', ratio: '9:16' }, '768p-9x16'],
+    [{ resolution: '480p', ratio: '3:2' }, '480p-3x2'], [{ resolution: '1080p', ratio: '2:3' }, '1080p-2x3'],
+    [{ resolution: '2k', ratio: '3:2' }, '2k-3x2'], [{ resolution: '4k', ratio: '2:3' }, '4k-2x3'],
+  ]) {
+    assert.equal(submit(input).body.output.ratio, ratio)
+  }
+})
+
 test('capabilities are left to the upstream instead of local allow-lists', () => {
   // Unpublished tiers/ratios/durations/media counts and workflow choices reach the upstream untouched.
   assert.equal(submit({ resolution: '720p', ratio: 'adaptive' }).body.output.ratio, '720p-adaptive')
