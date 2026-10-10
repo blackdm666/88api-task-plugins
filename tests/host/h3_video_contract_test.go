@@ -120,6 +120,18 @@ func TestIndependentPluginCatalogueH3VideoHTTP(t *testing.T) {
 	assert.Nil(t, content["headers"])
 	assert.Equal(t, 2, polls)
 
+	// 768P 3:2/2:3 is refused while decoding, before quota and before any upstream request.
+	for _, value := range []map[string]any{
+		{"prompt": "Fixture", "resolution": "768P", "ratio": "3:2"},
+		{"prompt": "Fixture", "output": map[string]any{"ratio": "768p-2x3"}},
+	} {
+		_, err := plugin.Engine.CallPath(context.Background(), "protocols", []string{"openai_video", "decodeRequest"},
+			map[string]any{"model": "H3-Video", "body": map[string]any{"kind": "json", "value": value}})
+		var hookErr *HookError
+		require.ErrorAs(t, err, &hookErr)
+		assert.Equal(t, "768P 不支持 3:2 / 2:3 比例，请改用其他比例或分辨率。", hookErr.Message)
+	}
+
 	for _, tc := range []map[string]any{
 		{"prompt": "Fixture", "duration": 0},
 		{"prompt": "Fixture", "duration": 3601},
