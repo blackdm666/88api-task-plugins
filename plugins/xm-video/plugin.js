@@ -77,7 +77,7 @@ export const meta = {
   apiVersion: 1,
   key: "xm-video",
   name: "XM-Video",
-  version: "3.2.0",
+  version: "3.2.1",
   author: { name: "88API" },
   description: { en: "88API channel integration plugin", zh: "88API渠道集成插件" },
   // Series names are declared only so each can carry its own resolution enum;
@@ -312,7 +312,11 @@ function taskBody(value) {
   const body = object(value);
   return body.status !== undefined || body.id || body.task_id ? body : object(body.data);
 }
-function errorMessage(body) { return first(object(body.error).message, body.error, body.message, "视频生成失败，请稍后重试。"); }
+// Provider-internal failures (its own upstream's rate limit, decode errors,
+// gateway pages) carry nothing the customer can act on and can name API keys.
+const BUSY_FAILURE = /JsonDecode response failed|Upstream submit failed \((?:429|5\d\d)\)|rate limit exceeded|<html|Bad Gateway|Gateway Time-?out|Service Unavailable/i;
+function publicFailure(message) { return BUSY_FAILURE.test(message) ? "生成服务繁忙，任务未能完成，请稍后重试。" : message; }
+function errorMessage(body) { return publicFailure(first(object(body.error).message, body.error, body.message, "视频生成失败，请稍后重试。")); }
 function resultURL(value, depth) {
   if ((depth || 0) > 4) return "";
   if (text(value)) return /^https?:\/\//i.test(text(value)) ? text(value) : "";
@@ -362,7 +366,7 @@ export const protocols = {
       const statuses = { NOT_START: "queued", SUBMITTED: "queued", QUEUED: "queued", IN_PROGRESS: "in_progress", SUCCESS: "completed", FAILURE: "failed" };
       const result = { id: task.task_id, object: "video", model: object(task.properties).origin_model_name || "", status: statuses[task.status] || "unknown", progress: Number(String(task.progress || "0").replace("%", "")), created_at: task.created_at };
       if (task.status === "SUCCESS" || task.status === "FAILURE") result.completed_at = task.updated_at;
-      if (task.status === "FAILURE") result.error = { code: "video_generation_failed", message: task.fail_reason || "视频生成失败，请稍后重试。" };
+      if (task.status === "FAILURE") result.error = { code: "video_generation_failed", message: publicFailure(task.fail_reason || "视频生成失败，请稍后重试。") };
       return result;
     },
   },
