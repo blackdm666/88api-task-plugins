@@ -342,6 +342,13 @@ smart duration `-1`, audio generation, `auto/edit/extend` task types, and
 provider task usage/result fields. It does not modify the existing `xm-video`
 plugin or require a NewAPI image rebuild.
 
+## Minimax-H3
+
+`minimax-h3@2.0.4` 只调整对客户可见的失败原因：上游的素材下载失败（`input_download_failed`，
+原文含素材链接）改为“素材下载超时/失败，请检查素材链接可公开访问后重试。”；其他失败原因去掉链接
+和域名后保留原文；`GET /v1/videos` 的失败错误码由 `dmc_task_failed` 改为中性的
+`video_task_failed`。请求、幂等键、用量与 2.0.3 一致。
+
 ## Minimax-H3 Async
 
 `minimax-h3-async` 从 DMC 插件独立派生，使用 `/v1/api/generate` 和
@@ -370,8 +377,12 @@ plugin or require a NewAPI image rebuild.
   `resolution`/`size`（档位如 `2k`，或宽x高换算比例）加 `ratio`/
   `aspect_ratio`。未提供时显式使用上游目录第一档 `480p-16x9`。
 - 时长取 `duration`/`seconds`/metadata，默认 5 秒。
-- 唯一的本地约束是计费安全：时长须为正整数且不超过宿主上限 3600 秒；
+- 本地约束是计费安全：时长须为正整数且不超过宿主上限 3600 秒；
   同一参数的多个别名必须一致，保证扣费数量与发给上游的值相同。
+- `h3-video@1.0.3` 起唯一的能力例外：768P 不支持 3:2 / 2:3。上游对该组合不返回参数错误，
+  而是返回“请稍后重试”类提示，客户会误以为可以重试。插件在解码阶段（扣费前、不请求上游）
+  以 400“768P 不支持 3:2 / 2:3 比例，请改用其他比例或分辨率。”拒绝；480P/1080P/2K/4K 的
+  3:2、2:3 及 768P 的其他比例不受影响，请求与 1.0.2 完全一致。
 - 计费用量为 `seconds` 与 `resolution`（枚举 480p/768p/1080p/2k/4k，即上游
   计价档位）。管理员须为模型配置按分辨率区分的表达式，例如
   `u("resolution") == "1080p" ? tier("1080p", u("seconds") * 单价) : ...`；
@@ -459,6 +470,9 @@ configuration in this repository.
   共用 6 档枚举会把未售档位按兜底价展示。旧分档名与未声明的动态模型仍使用 6 档超集，计费与请求不变。
   横向价格表还需要在模型资料里开启 `compact_pricing_display`。
 - 新增上游分辨率：在系列定义里加一个档位，并在该系列价格表达式中加一个分支。
+- `xm-video@3.2.1` 起，上游内部故障类失败原因（`JsonDecode response failed`、`Upstream submit failed (429/5xx)`、
+  `rate limit exceeded`、网关 HTML 页面）对客户统一显示为“生成服务繁忙，任务未能完成，请稍后重试。”，
+  提交、轮询和 `GET /v1/videos` 呈现一致。内容审核、参数错误及其上游前缀保持原文，请求与计费不变。
 - 3.0.x 的分档名（`SD2.5 480P`、`kling-3.0-turbo-4k`、`seedance-2.0-mini-720p`、`Seedance-2.0-720p官方版` 等，
   以及历史 `SD2.0 4k`）继续可用：由所属系列派生、固定原档位、忽略请求分辨率，上游请求与 3.0.x 完全一致。
 
