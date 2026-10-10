@@ -127,7 +127,7 @@ test('usage schema declares every tier the plugin can bill', () => {
     for (const [key] of tiers) assert.ok(declared.includes(key), `${series} ${key}`)
   }
   assert.ok(declared.includes('768p'))
-  assert.equal(plugin.meta.version, '3.2.1')
+  assert.equal(plugin.meta.version, '3.2.2')
 })
 
 test('each series declares exactly the tiers it sells, in display order', () => {

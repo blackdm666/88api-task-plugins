@@ -482,6 +482,11 @@ configuration in this repository.
 - `xm-video@3.2.1` 起，上游内部故障类失败原因（`JsonDecode response failed`、`Upstream submit failed (429/5xx)`、
   `rate limit exceeded`、网关 HTML 页面）对客户统一显示为“生成服务繁忙，任务未能完成，请稍后重试。”，
   提交、轮询和 `GET /v1/videos` 呈现一致。内容审核、参数错误及其上游前缀保持原文，请求与计费不变。
+- `xm-video@3.2.2` 起，去掉服务商的失败原因包装（`上游任务失败:`、`<任务号> status=failed msg=`、
+  `task failed with status: FAIL, message:`、`task_failed:`、`Upstream submit failed (4xx): {...}`），
+  内容审核（提示词违规、生成/输入内容敏感、版权、真人）和常见参数错误（时长、比例、素材失效、像素/尺寸、分辨率）
+  改为说明原因和修改方法的中文提示，有错误码、请求 ID 时附在末尾（与 Seedance 渠道格式一致）。
+  未识别的原因去掉包装和链接后原样显示；已转换的文本再次呈现保持不变，历史任务查询同样生效。请求与计费不变。
 - 3.0.x 的分档名（`SD2.5 480P`、`kling-3.0-turbo-4k`、`seedance-2.0-mini-720p`、`Seedance-2.0-720p官方版` 等，
   以及历史 `SD2.0 4k`）继续可用：由所属系列派生、固定原档位、忽略请求分辨率，上游请求与 3.0.x 完全一致。
 

@@ -77,7 +77,7 @@ export const meta = {
   apiVersion: 1,
   key: "xm-video",
   name: "XM-Video",
-  version: "3.2.1",
+  version: "3.2.2",
   author: { name: "88API" },
   description: { en: "88API channel integration plugin", zh: "88API渠道集成插件" },
   // Series names are declared only so each can carry its own resolution enum;
@@ -315,7 +315,108 @@ function taskBody(value) {
 // Provider-internal failures (its own upstream's rate limit, decode errors,
 // gateway pages) carry nothing the customer can act on and can name API keys.
 const BUSY_FAILURE = /JsonDecode response failed|Upstream submit failed \((?:429|5\d\d)\)|rate limit exceeded|<html|Bad Gateway|Gateway Time-?out|Service Unavailable/i;
-function publicFailure(message) { return BUSY_FAILURE.test(message) ? "生成服务繁忙，任务未能完成，请稍后重试。" : message; }
+// The provider wraps the generation service's English error in its own
+// prefixes, sometimes several times: "上游任务失败: <task id> status=failed msg=",
+// "task failed with status: FAIL, message: ", "task_failed: ".
+const FAILURE_WRAPPERS = [/^上游任务失败\s*[:：]\s*/, /^orphan recovery:\s*/i, /^task failed with status:\s*\w+,\s*message:\s*/i, /^task_failed:\s*/i, /^\S+ status=\w+ msg=/];
+const FAILURE_CODE = /^((?:Input|Output)[A-Za-z]+(?:\.[A-Za-z]+)?|InvalidParameter(?:\.[A-Za-z]+)?):\s+/;
+const MEDIA_NAMES = { image: "图片", video: "视频", audio: "音频" };
+const TASK_TYPES = { "reference generation": "参考生成", "video extension": "视频延长", "video editing": "视频编辑", "first-frame generation": "首帧生成", "first-last-frame generation": "首尾帧生成" };
+function nestedError(raw) {
+  let value;
+  try { value = JSON.parse(raw); } catch (_) { return {}; }
+  const error = object(object(value).error).message !== undefined ? object(value).error : object(value);
+  const message = text(error.message);
+  const inner = message.startsWith("{") ? nestedError(message) : {};
+  return { message: inner.message || message, code: inner.code || (typeof error.code === "string" ? error.code : "") };
+}
+function unwrapFailure(message) {
+  let body = text(message), code = "", changed = true;
+  while (changed) {
+    changed = false;
+    for (const pattern of FAILURE_WRAPPERS) {
+      const next = body.replace(pattern, "").trim();
+      if (next !== body) { body = next; changed = true; }
+    }
+    const submit = body.match(/^Upstream submit failed \(\d+\):\s*(\{[\s\S]*\})$/i);
+    const nested = submit ? nestedError(submit[1]) : {};
+    if (nested.message) { body = nested.message; code = code || nested.code; changed = true; }
+    const prefixed = body.match(FAILURE_CODE);
+    if (prefixed) { code = code || prefixed[1]; body = body.slice(prefixed[0].length).trim(); changed = true; }
+  }
+  const id = body.match(/\s*Request id:\s*([A-Za-z0-9-]+)\.?$/i);
+  if (id) body = body.slice(0, id.index).trim();
+  return { body: body, code: code, requestId: id ? id[1] : "" };
+}
+function policyFailure(side, kind, refs, reason) {
+  kind = kind.toLowerCase();
+  const media = MEDIA_NAMES[kind] || "素材";
+  const output = side.toLowerCase() === "output";
+  const copyright = /copyright/i.test(reason), person = /real person/i.test(reason);
+  const list = (refs.match(/content\[\d+\]/g) || []).join("、");
+  const subject = kind === "text" ? "提示词" : (output ? "生成的" : "输入") + media + (!output && list ? " " + list + " " : "");
+  const cause = copyright ? "可能涉及版权限制" : person ? "可能包含真人或可识别人物" : "可能包含敏感内容";
+  let action = "请调整提示词或参考素材后重试。";
+  if (kind === "text") action = "请修改提示词后重试。";
+  else if (!output) action = person ? "请更换不含真人或可识别人物的" + media + "后重试。" : copyright ? "请更换为您拥有版权或无版权限制的" + media + "后重试。" : "请更换" + media + "后重试。";
+  else if (copyright) action = kind === "audio" ? "请避免使用受版权保护的音乐、歌曲或声音，修改提示词或参考音频后重试。" : "请避免在提示词或参考素材中使用受版权保护的角色、作品或品牌，修改后重试。";
+  return subject + cause + "，已被内容安全策略拦截。" + action;
+}
+function seconds(value) { return String(Number(value)); }
+const FAILURE_RULES = [
+  [/^Input Prompt violates policy\.?$/i, function () { return "提示词未通过内容安全审核，请修改提示词后重试。"; }],
+  [/^The request failed because the (input|output) (image|video|audio|text)((?:\s*'content\[\d+\]')*) may (contain sensitive information|be related to copyright restrictions|contain real person)/i,
+    function (m) { return policyFailure(m[1], m[2], m[3], m[4]); }],
+  [/^OutputVideoCopyright$/, function () { return policyFailure("output", "video", "", "copyright"); }],
+  [/^InputVideoRisk$/, function () { return "输入视频未通过内容安全审核，请更换视频后重试。"; }],
+  [/Input ImageInfos contains prohibited content/i, function () { return "输入图片包含违规内容，已被内容安全策略拦截。请更换图片后重试。"; }],
+  [/^The parameter ratio specified in the request is not valid\. For first-frame or first-last-frame generation, the output ratio follows the first-frame image/i,
+    function () { return "首帧或首尾帧生成时，输出画幅比例跟随首帧图片，请改用与首帧图片一致的比例或不指定比例后重试。"; }],
+  [/^The parameter `content(?:\[(\d+)\])?` specified in the request is not valid: the parameter (audio|video) (total )?duration \(seconds\) specified in the request must be (less|greater) than or equal to ([\d.]+)/i,
+    function (m) {
+      const media = "输入" + MEDIA_NAMES[m[2].toLowerCase()];
+      return (m[3] ? media + "总时长" : media + (m[1] ? " content[" + m[1] + "] " : "") + "时长") + (m[4].toLowerCase() === "less" ? "不能超过 " : "不能少于 ") + seconds(m[5]) + " 秒，请调整后重试。";
+    }],
+  [/The specified asset (?:\S+ )?is not found/i, function (m, body) {
+    const ref = (body.match(/The parameter `(content\[\d+\])/) || [])[1];
+    return "输入素材" + (ref ? " " + ref + " " : "") + "不存在或已失效，请重新上传素材后重试。";
+  }],
+  [/pe_classification specified in the request is not valid: You requested the ([a-z -]+?) task type, but \S+ classified your task as ([a-z -]+?) based on/i,
+    function (m) { return "提示词和参考素材被识别为「" + (TASK_TYPES[m[2].toLowerCase()] || m[2]) + "」任务，与所选的「" + (TASK_TYPES[m[1].toLowerCase()] || m[1]) + "」类型不一致，请调整提示词或参考素材后重试。"; }],
+  [/input media detect failed: invalid_media/i, function () { return "输入素材格式无效或无法识别，请更换素材后重试。"; }],
+  [/^Image pixel is invalid/i, function () { return "输入图片的像素尺寸不符合要求，请更换图片后重试。"; }],
+  [/PixelCountTooSmall\]?: Pixel count must be between (\d+) and (\d+)/i,
+    function (m) { return "输入图片像素过少，总像素数需在 " + m[1] + " 到 " + m[2] + " 之间，请更换更高分辨率的图片后重试。"; }],
+  [/Reference material (@\w+) could not be prepared: (Width|Height) must be between (\d+)px and (\d+)px/i,
+    function (m) { return "参考素材 " + m[1] + " 的" + (m[2].toLowerCase() === "width" ? "宽度" : "高度") + "需在 " + m[3] + "px 到 " + m[4] + "px 之间，请调整后重试。"; }],
+  [/^(audio_file_\d+)：音频短于 ([\d.]+) 秒：实际 ([\d.]+)/,
+    function (m) { return "输入音频 " + m[1] + " 时长不能少于 " + seconds(m[2]) + " 秒（当前 " + Number(m[3]).toFixed(2) + " 秒），请调整后重试。"; }],
+  [/duration should be at most ([\d.]+)s, got ([\d.]+)s/i,
+    function (m) { return "输入视频时长不能超过 " + seconds(m[1]) + " 秒（当前 " + seconds(m[2]) + " 秒），请裁剪后重试。"; }],
+  [/^reference_video total duration ([\d.]+)s exceeds max ([\d.]+)s/i,
+    function (m) { return "输入视频总时长不能超过 " + seconds(m[2]) + " 秒（当前 " + seconds(m[1]) + " 秒），请裁剪后重试。"; }],
+  [/^input_video_duration\(([\d.]+)s\) \+ duration\(([\d.]+)s\) = ([\d.]+)s exceeds ([\d.]+)s limit/i,
+    function (m) { return "输入视频时长与生成时长合计不能超过 " + seconds(m[4]) + " 秒（当前 " + seconds(m[1]) + " + " + seconds(m[2]) + " = " + seconds(m[3]) + " 秒），请缩短后重试。"; }],
+  [/^Input should be (.+?): parameters\.resolution$/i,
+    function (m) { return "分辨率参数无效，请选择：" + m[1].replace(/'/g, "").split(/\s*,\s*|\s+or\s+/).join("、") + "。"; }],
+  [/^Input \d+ data is invalid \(too short\)/i, function () { return "输入素材数据无效（内容过短或已损坏），请更换素材后重试。"; }],
+  [/^task time ?out\.?$/i, function () { return "视频生成超时，任务未能完成，请稍后重新提交。"; }],
+  [/^Upstream submit failed \(4\d\d\)/i, function () { return "请求参数或素材无效，任务提交失败，请检查后重试。"; }],
+];
+function publicFailure(message) {
+  if (BUSY_FAILURE.test(message)) return "生成服务繁忙，任务未能完成，请稍后重试。";
+  const failure = unwrapFailure(message);
+  let result = "";
+  for (const rule of FAILURE_RULES) {
+    const m = failure.body.match(rule[0]);
+    if (m) { result = rule[1](m, failure.body); break; }
+  }
+  if (!result) {
+    if (failure.body === text(message)) return message;
+    result = failure.body.replace(/https?:\/\/[^\s"'<>]+/g, "[链接]");
+  }
+  return result + (failure.code ? " 错误码：" + failure.code + "。" : "") + (failure.requestId ? " 请求 ID：" + failure.requestId + "。" : "");
+}
 function errorMessage(body) { return publicFailure(first(object(body.error).message, body.error, body.message, "视频生成失败，请稍后重试。")); }
 function resultURL(value, depth) {
   if ((depth || 0) > 4) return "";
