@@ -26,9 +26,10 @@ for (const resolution of ["480p", "720p", "1080p"]) {
   // the 480/720/1080 tiers cannot accidentally all generate the default 480p.
   addModel("SD2.0 " + resolution.toUpperCase(), "cvd-seedance-2.0", resolution, SD20);
 }
-// The upstream catalog spells this quality "4K"; the sales name keeps the
-// channel's lowercase "4k".
-addModel("SD2.0 4k", "cvd-seedance-2.0", "4K", SD20);
+// The upstream catalog spells this quality "4K", as does the sales name.
+addModel("SD2.0 4K", "cvd-seedance-2.0", "4K", SD20);
+// Tasks created while the sales name was still lowercase "SD2.0 4k".
+MODEL_CONFIGS["SD2.0 4k"] = MODEL_CONFIGS["SD2.0 4K"];
 for (const resolution of ["480p", "720p"]) {
   const name = "seedance-2.0-mini-" + resolution;
   addModel(name, name, resolution, {});
@@ -49,7 +50,7 @@ export const meta = {
   apiVersion: 1,
   key: "xm-video",
   name: "XM-Video",
-  version: "3.0.7",
+  version: "3.0.8",
   author: { name: "88API" },
   description: { en: "88API channel integration plugin", zh: "88API渠道集成插件" },
   models: [],
