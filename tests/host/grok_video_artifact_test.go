@@ -148,3 +148,23 @@ func TestIndependentPluginCatalogueGrokVideoExternalContentHasNoKey(t *testing.T
 	assert.Equal(t, "artifact_request_rejected", proxyErr.code)
 	assert.Equal(t, 1, calls, "authenticated redirect must not reach the external destination")
 }
+
+// The model square shows a "price examples" table whenever the pricing API
+// carries plugin usage examples; Grok publishes none, only the per-resolution
+// schema that drives the compact matrix.
+func TestIndependentPluginCatalogueGrokVideoNoPriceExamples(t *testing.T) {
+	source, err := os.ReadFile("../../plugins/grok-video/plugin.js")
+	require.NoError(t, err)
+	plugin, err := pluginruntime.NewRegistry().Register(string(source), pluginruntime.Options{})
+	require.NoError(t, err)
+	for name, expected := range map[string][]string{
+		"grok-imagine-video":     {"480p", "720p"},
+		"grok-imagine-video-1.5": {"480p", "720p", "1080p"},
+		"grok-imagine-video-2":   {"480p", "720p", "1080p"},
+	} {
+		schema, examples := plugin.Meta.UsageForModel(name)
+		assert.Empty(t, examples, name)
+		assert.Equal(t, expected, schema["resolution"].Enum, name)
+		assert.Contains(t, schema, "seconds", name)
+	}
+}
