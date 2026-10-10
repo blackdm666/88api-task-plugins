@@ -316,8 +316,15 @@
       "protocols": [
         "openai_video"
       ],
-      "latest": "2.0.4",
+      "latest": "2.1.0",
       "versions": [
+        {
+          "version": "2.1.0",
+          "path": "plugins/minimax-h3/2.1.0/plugin.js",
+          "sha256": "5ed5c862580e2caed23877cad60e1f6ce91479963c29fb39f87036cff1bd2d01",
+          "minApiVersion": 1,
+          "kind": "task"
+        },
         {
           "version": "2.0.4",
           "path": "plugins/minimax-h3/2.0.4/plugin.js",
