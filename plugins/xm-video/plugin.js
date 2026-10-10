@@ -1,56 +1,72 @@
 const RATIOS = ["16:9", "9:16", "1:1", "4:3", "3:4"];
-// Sales identity owns resolution; channel model_mapping owns the upstream ID.
-// New models/capability changes belong here and can be uploaded without rebuilding
-// the gateway. Do not derive a paid resolution from user-supplied metadata.
+// Billing enum values, in display order. Every tier key must be listed here.
+const RESOLUTIONS = ["480p", "720p", "768p", "1080p", "2k", "4k"];
+// A series sells one name and bills the tier its request selects; a legacy
+// fixed-tier name derives from its series and ignores requested resolutions.
+// Each tier names the upstream ID used when the channel maps none and the
+// quality spelling the upstream expects. Adding an upstream resolution is one
+// tier here plus one branch in the series price expression.
 const MODEL_CONFIGS = {};
-function addModel(name, upstream, resolution, overrides) {
-  MODEL_CONFIGS[name] = Object.assign({ upstream: upstream, resolution: resolution,
+function tier(key, upstream, quality) {
+  if (!RESOLUTIONS.includes(key)) throw new Error("undeclared resolution tier " + key);
+  return { key: key, upstream: upstream, quality: quality || key };
+}
+function addModel(name, tiers, overrides, fixed) {
+  MODEL_CONFIGS[name] = Object.assign({ tiers: tiers, fixed: !!fixed,
     defaultDuration: 5, minDuration: 4, maxDuration: 15, defaultRatio: "16:9",
     ratios: RATIOS.concat(["21:9"]), maxPrompt: Infinity, images: 9, videos: 3,
     audios: 3, framesExclusive: false, promptless: false, nativeMedia: false,
     generateAudio: false, visualWithAudio: false, totalMedia: 0 }, overrides);
 }
-const SD20 = { defaultRatio: "1:1", framesExclusive: true, promptless: true,
-  images: 9, videos: 3, audios: 3, totalMedia: 12 };
-for (const resolution of ["480p", "720p", "1080p"]) {
-  const wan = "wan3.0-video-" + resolution;
-  addModel(wan, wan, resolution, { maxDuration: 30, ratios: RATIOS, promptless: true,
-    images: resolution === "480p" ? 30 : 10, videos: resolution === "480p" ? 10 : 5,
-    audios: resolution === "480p" ? 10 : 5, framesExclusive: resolution !== "480p" });
-  const dvc = "dvc-seedance-2.5" + (resolution === "720p" ? "" : "-" + resolution);
-  addModel("SD2.5 " + resolution.toUpperCase(), dvc, resolution, {
-    maxDuration: 30, defaultRatio: "auto", ratios: ["auto", "1:1", "21:9", "16:9", "9:16", "3:4", "4:3"],
-    images: 30, videos: 10, audios: 10, framesExclusive: true,
-    generateAudio: true });
-  // The live cvd catalog has four qualities. A sales alias is mandatory so
-  // the 480/720/1080 tiers cannot accidentally all generate the default 480p.
-  addModel("SD2.0 " + resolution.toUpperCase(), "cvd-seedance-2.0", resolution, SD20);
+// The first tier is the default when a request names no resolution.
+function addSeries(name, tiers, overrides) { addModel(name, tiers, overrides, false); }
+function addFixed(name, series, key) {
+  const cfg = MODEL_CONFIGS[series];
+  MODEL_CONFIGS[name] = Object.assign({}, cfg, { tiers: cfg.tiers.filter(function (t) { return t.key === key; }), fixed: true });
 }
-// The upstream catalog spells this quality "4K", as does the sales name.
-addModel("SD2.0 4K", "cvd-seedance-2.0", "4K", SD20);
+addSeries("SD2.5", [tier("480p", "dvc-seedance-2.5-480p"), tier("720p", "dvc-seedance-2.5"),
+  tier("1080p", "dvc-seedance-2.5-1080p")], {
+  maxDuration: 30, defaultRatio: "auto", ratios: ["auto", "1:1", "21:9", "16:9", "9:16", "3:4", "4:3"],
+  images: 30, videos: 10, audios: 10, framesExclusive: true, generateAudio: true,
+  explicitRatioUpstream: "lltai-vs-2.5" });
+// The upstream catalog spells the top SD2.0 quality "4K".
+addSeries("SD2.0", [tier("480p", "cvd-seedance-2.0"), tier("720p", "cvd-seedance-2.0"),
+  tier("1080p", "cvd-seedance-2.0"), tier("4k", "cvd-seedance-2.0", "4K")], {
+  defaultRatio: "1:1", framesExclusive: true, promptless: true, totalMedia: 12 });
+addSeries("kling-3.0-turbo", ["720p", "1080p", "2k", "4k"].map(function (key) { return tier(key, "kling-3.0-turbo"); }), {
+  ratios: ["16:9", "9:16", "1:1"], maxPrompt: 2000, images: 30, videos: 10,
+  audios: 0, nativeMedia: true, generateAudio: true });
+addSeries("seedance-2.0-mini官方版", [tier("480p", "seedance-2.0-mini-480p"), tier("720p", "seedance-2.0-mini-720p")], {});
+addSeries("seedance-2.5官方版", [tier("720p", "doubao-seedance-2-5-720p")], {
+  defaultDuration: 4, maxDuration: 30, images: 30, videos: 10, audios: 10, framesExclusive: true });
+addSeries("seedance-2.0官方版", [tier("720p", "doubao-seedance-2-0-720p")], { defaultDuration: 4, framesExclusive: true });
+addSeries("seedance-2.0-fast官方版", [tier("720p", "doubao-seedance-2-0-fast-720p")], { defaultDuration: 4, framesExclusive: true });
+for (const key of ["480p", "720p", "1080p"]) {
+  addFixed("SD2.5 " + key.toUpperCase(), "SD2.5", key);
+  addFixed("SD2.0 " + key.toUpperCase(), "SD2.0", key);
+}
+addFixed("SD2.0 4K", "SD2.0", "4k");
 // Tasks created while the sales name was still lowercase "SD2.0 4k".
 MODEL_CONFIGS["SD2.0 4k"] = MODEL_CONFIGS["SD2.0 4K"];
-for (const resolution of ["480p", "720p"]) {
-  const name = "seedance-2.0-mini-" + resolution;
-  addModel(name, name, resolution, {});
+for (const key of ["720p", "1080p", "2k", "4k"]) addFixed("kling-3.0-turbo-" + key, "kling-3.0-turbo", key);
+for (const key of ["480p", "720p"]) addFixed("seedance-2.0-mini-" + key, "seedance-2.0-mini官方版", key);
+addFixed("Seedance-2.5-720p官方版", "seedance-2.5官方版", "720p");
+addFixed("Seedance-2.0-720p官方版", "seedance-2.0官方版", "720p");
+addFixed("Seedance-2.0-fast-720p官方版", "seedance-2.0-fast官方版", "720p");
+for (const key of ["480p", "720p", "1080p"]) {
+  const wan = "wan3.0-video-" + key;
+  addModel(wan, [tier(key, wan)], { maxDuration: 30, ratios: RATIOS, promptless: true,
+    images: key === "480p" ? 30 : 10, videos: key === "480p" ? 10 : 5,
+    audios: key === "480p" ? 10 : 5, framesExclusive: key !== "480p" }, true);
 }
-for (const resolution of ["720p", "1080p", "2k", "4k"]) {
-  addModel("kling-3.0-turbo-" + resolution, "kling-3.0-turbo", resolution, {
-    ratios: ["16:9", "9:16", "1:1"], maxPrompt: 2000, images: 30, videos: 10,
-    audios: 0, nativeMedia: true, generateAudio: true });
-}
-addModel("Seedance-2.5-720p官方版", "doubao-seedance-2-5-720p", "720p", {
-  defaultDuration: 4, maxDuration: 30, images: 30, videos: 10, audios: 10, framesExclusive: true });
-addModel("Seedance-2.0-720p官方版", "doubao-seedance-2-0-720p", "720p", { defaultDuration: 4, framesExclusive: true });
-addModel("Seedance-2.0-fast-720p官方版", "doubao-seedance-2-0-fast-720p", "720p", { defaultDuration: 4, framesExclusive: true });
-addModel("minimax-h3-768p", "minimax-h3-768p", "768p", { defaultDuration: 4,
+addModel("minimax-h3-768p", [tier("768p", "minimax-h3-768p")], { defaultDuration: 4,
   ratios: ["1:1", "16:9", "9:16"], maxPrompt: 2500, images: 10, videos: 5,
-  audios: 5, visualWithAudio: true });
+  audios: 5, visualWithAudio: true }, true);
 export const meta = {
   apiVersion: 1,
   key: "xm-video",
   name: "XM-Video",
-  version: "3.0.8",
+  version: "3.1.0",
   author: { name: "88API" },
   description: { en: "88API channel integration plugin", zh: "88API渠道集成插件" },
   models: [],
@@ -59,6 +75,11 @@ export const meta = {
   protocols: ["openai_video"],
   usageSchema: {
     seconds: { type: "number", unit: "second", description: { en: "Video generation unit price", zh: "视频生成单价" } },
+    resolution: {
+      enum: RESOLUTIONS,
+      enumLabels: Object.fromEntries(RESOLUTIONS.map(function (key) { return [key, { en: key.toUpperCase(), zh: key.toUpperCase() }]; })),
+      description: { en: "Output video resolution", zh: "输出视频分辨率" },
+    },
   },
 };
 
@@ -93,34 +114,60 @@ function modelConfig(model) {
   // Unknown models follow the standard contract without guessed capabilities.
   // Explicit duration keeps pre-consumption and the submitted quantity identical.
   return {
-    upstream: model, resolution: "", minDuration: 1,
+    upstream: model, tiers: null, minDuration: 1,
     maxDuration: Number.MAX_SAFE_INTEGER, defaultRatio: "", ratios: null,
     maxPrompt: Infinity, images: Infinity, videos: Infinity, audios: Infinity,
     promptless: true, generateAudio: true,
   };
 }
-function payloadFor(req, model, upstreamModel) {
-  const cfg = modelConfig(Object.prototype.hasOwnProperty.call(MODEL_CONFIGS, model) ? model : upstreamModel || model);
+function configFor(model, upstreamModel) {
+  return modelConfig(Object.prototype.hasOwnProperty.call(MODEL_CONFIGS, model) ? model : upstreamModel || model);
+}
+function requestView(req) {
   let metadata;
   try { metadata = object(typeof req.metadata === "string" ? JSON.parse(req.metadata) : req.metadata); }
   catch (_error) { throw new Error("metadata 参数格式不正确，请提供有效的 JSON 对象。"); }
-  const all = Object.assign({}, metadata, req);
-  const sizeRatios = { "1280x720": "16:9", "1920x1080": "16:9", "2560x1440": "16:9", "720x1280": "9:16", "1080x1920": "9:16", "1440x2560": "9:16", "1024x1024": "1:1", "1440x1440": "1:1", "1920x1440": "4:3", "1440x1920": "3:4" };
+  return { metadata: metadata, all: Object.assign({}, metadata, req) };
+}
+// Only standard 16:9/9:16 frames name a tier; other sizes only imply a ratio.
+const SIZE_TIERS = { "854x480": "480p", "480x854": "480p", "1280x720": "720p", "720x1280": "720p",
+  "1920x1080": "1080p", "1080x1920": "1080p", "2560x1440": "2k", "1440x2560": "2k",
+  "3840x2160": "4k", "2160x3840": "4k" };
+// The billed tier and the upstream quality both come from here; an
+// unsupported explicit resolution is rejected rather than downgraded.
+function tierFor(all, cfg) {
+  if (cfg.fixed) return cfg.tiers[0];
+  const value = [all.resolution, all.quality, all.vquality].find(function (item) { return text(item) || Number.isFinite(item); });
+  let key = value === undefined ? "" : String(value).trim().toLowerCase();
+  if (/^\d+$/.test(key)) key += "p";
+  const size = text(all.size).toLowerCase();
+  if (!key && Object.prototype.hasOwnProperty.call(SIZE_TIERS, size)) key = SIZE_TIERS[size];
+  if (!key) return cfg.tiers[0];
+  const found = cfg.tiers.find(function (item) { return item.key === key; });
+  if (!found) throw new Error("当前模型支持的分辨率：" + cfg.tiers.map(function (item) { return item.key.toUpperCase(); }).join("、") + "，请选择其中之一。");
+  return found;
+}
+function payloadFor(req, model, upstreamModel) {
+  const cfg = configFor(model, upstreamModel);
+  const view = requestView(req);
+  const metadata = view.metadata;
+  const all = view.all;
+  const tierChoice = cfg.tiers ? tierFor(all, cfg) : null;
+  const sizeRatios = { "854x480": "16:9", "1280x720": "16:9", "1920x1080": "16:9", "2560x1440": "16:9", "3840x2160": "16:9", "480x854": "9:16", "720x1280": "9:16", "1080x1920": "9:16", "1440x2560": "9:16", "2160x3840": "9:16", "1024x1024": "1:1", "1440x1440": "1:1", "1920x1440": "4:3", "1440x1920": "3:4" };
   const requestedSize = first(all.size, req.size);
   const sizeRatio = (cfg.ratios || []).includes(requestedSize) ? requestedSize
     : sizeRatios[requestedSize] || (requestedSize === "3360x1440" ? "21:9" : "");
   const body = {
-    model: upstreamModel && upstreamModel !== model ? upstreamModel : cfg.upstream,
+    model: upstreamModel && upstreamModel !== model ? upstreamModel : tierChoice ? tierChoice.upstream : cfg.upstream,
     ratio: first(all.ratio, all.aspect_ratio, sizeRatio, cfg.defaultRatio),
     duration: secondsFor(req, cfg),
-    resolution: cfg.resolution || first(all.resolution, all.quality, all.vquality),
+    resolution: tierChoice ? tierChoice.quality : first(all.resolution, all.quality, all.vquality),
   };
   if (!body.resolution) delete body.resolution;
   if (!body.ratio) delete body.ratio;
   // VS2.5 requires an explicit supported ratio. Do not silently turn the
   // legacy SD2.5 "auto" default into 16:9, and keep legacy DVC behavior.
-  const isVS25 = /^SD2\.5 (480P|720P|1080P)$/.test(model) &&
-    body.model === "lltai-vs-2.5";
+  const isVS25 = !!cfg.explicitRatioUpstream && body.model === cfg.explicitRatioUpstream;
   const requestedRatio = first(all.ratio, all.aspect_ratio, sizeRatio);
   if (isVS25 && !requestedRatio) throw new Error("请选择具体画幅比例后再提交，例如 16:9、9:16 或 1:1。");
   if (isVS25 && requestedRatio === "auto") throw new Error("当前模型不支持自动比例，请选择具体画幅比例。");
@@ -225,6 +272,17 @@ export function decodeRequest(ctx) {
   const payload = payloadFor(req, ctx.model);
   req.duration = payload.duration;
   delete req.seconds;
+  // The host checks every request key named "resolution" against the usage
+  // enum, so only the canonical tier key may remain under that name.
+  const cfg = configFor(ctx.model);
+  const tierKey = cfg.tiers ? tierFor(requestView(req).all, cfg).key : "";
+  if (req.metadata && typeof req.metadata === "object") {
+    req.metadata = Object.assign({}, req.metadata);
+    delete req.metadata.resolution;
+  }
+  delete req.resolution;
+  if (tierKey) req.resolution = tierKey;
+  else if (payload.resolution) req.quality = payload.resolution;
   return { kind: "submit", model: ctx.model, action: payload.referenceImages || payload.referenceVideos || payload.referenceAudios || payload.firstFrame || payload.media || payload.images || payload.videos ? "image_to_video" : "text_to_video", requestBody: req };
 }
 
@@ -232,7 +290,13 @@ function base(ctx) { return String(ctx.baseUrl).replace(/\/+$/, "").replace(/\/v
 export function buildSubmitRequest(ctx) {
   return { url: base(ctx) + "/v1/videos/generations", method: "POST", headers: { Authorization: "Bearer " + ctx.apiKey, "Content-Type": "application/json" }, body: payloadFor(object(ctx.requestBody), ctx.model, ctx.upstreamModel) };
 }
-export function extractUsage(ctx) { return { seconds: secondsFor(object(ctx.requestBody), modelConfig(ctx.model)) }; }
+export function extractUsage(ctx) {
+  const req = object(ctx.requestBody);
+  const cfg = configFor(ctx.model, ctx.upstreamModel);
+  const usage = { seconds: secondsFor(req, cfg) };
+  if (cfg.tiers) usage.resolution = tierFor(requestView(req).all, cfg).key;
+  return usage;
+}
 
 function taskBody(value) {
   const body = object(value);

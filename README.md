@@ -15,7 +15,7 @@
 | Vertex Omni (isolated QA) | `vertex-omni` | `1.0.0` |
 | Alibaba Bailian (factory-compatible override) | `alibaba` | `1.4.2` |
 
-Minimax-H3 与 XM-Video 的初始独立版本与当时88API镜像和生产自定义插件源码一致，仅迁移维护及发布位置；Minimax-H3 Async 是另行新增的插件。
+Minimax-H3 与 XM-Video 的初始独立版本与当时88API镜像和生产自定义插件源码一致，仅迁移维护及发布位置；Minimax-H3 Async 是另行新增的插件。XM-Video 3.1.0 起按系列售卖，见下方 XM-Video 小节。
 
 ## Alibaba Bailian：Wan3 超宽画幅修正
 
@@ -422,6 +422,31 @@ contradicts an explicit ratio or resolution returns a 400. Pixel sizes such as
 Media supplied to the official endpoint must be reachable by both SDGO and
 the upstream Ark service. The plugin does not put API keys or channel
 configuration in this repository.
+
+## XM-Video：按系列售卖、按分辨率计费
+
+`xm-video@3.1.0` 起，每个系列只售一个模型名，分辨率由请求选择并参与计费：
+
+| 系列名 | 档位（首个为默认） | 上游 |
+| --- | --- | --- |
+| `SD2.5` | 480p、720p、1080p | 渠道映射到 `lltai-vs-2.5` |
+| `SD2.0` | 480p、720p、1080p、4k（上游写作 `4K`） | 渠道映射到 `lltai-vs-2.0` |
+| `kling-3.0-turbo` | 720p、1080p、2k、4k | 同名 |
+| `seedance-2.0-mini官方版` | 480p、720p | 按档位选 `seedance-2.0-mini-480p`/`-720p` |
+| `seedance-2.5官方版` | 720p | `doubao-seedance-2-5-720p` |
+| `seedance-2.0官方版` | 720p | `doubao-seedance-2-0-720p` |
+| `seedance-2.0-fast官方版` | 720p | `doubao-seedance-2-0-fast-720p` |
+
+- 分辨率依次读取 `resolution`、`quality`、`vquality`（含 `metadata` 内同名字段，不区分大小写，
+  `720` 视为 `720p`）；都没有时，标准 16:9/9:16 尺寸（如 `1920x1080`、`2560x1440`、`3840x2160`）
+  决定档位，其他尺寸只推断比例；仍没有时使用该系列最低档。系列不支持的分辨率直接拒绝，不降档。
+- 用量上报 `seconds` 和规范化的 `resolution`（`480p`/`720p`/`768p`/`1080p`/`2k`/`4k`），价格表达式
+  示例：`u("resolution") == "480p" ? tier("480P", u("seconds") * a) : (u("resolution") == "720p" ? tier("720P", u("seconds") * b) : tier("1080P", u("seconds") * c))`。
+- 宿主会按该枚举校验请求体中所有名为 `resolution` 的键，插件因此只在请求中保留规范档位；未声明的动态模型
+  不上报档位，请求的分辨率改存为 `quality` 原样转给上游。
+- 新增上游分辨率：在系列定义里加一个档位，并在该系列价格表达式中加一个分支。
+- 3.0.x 的分档名（`SD2.5 480P`、`kling-3.0-turbo-4k`、`seedance-2.0-mini-720p`、`Seedance-2.0-720p官方版` 等，
+  以及历史 `SD2.0 4k`）继续可用：由所属系列派生、固定原档位、忽略请求分辨率，上游请求与 3.0.x 完全一致。
 
 ## 仓库可见性与安装更新
 
