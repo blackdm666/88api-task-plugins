@@ -71,7 +71,7 @@ function mp4(seconds, resolution = "720p", version = 0, movieSeconds = seconds) 
 
 test("manifest claims exactly the four public names, never type 41, upstream IDs or Lite", () => {
   assert.equal(plugin.meta.key, "vertex-omni");
-  assert.equal(plugin.meta.version, "1.6.2");
+  assert.equal(plugin.meta.version, "1.7.0");
   assert.deepEqual(plugin.meta.requiredCapabilities, ["task-preflight@1"], "no SSE host capability");
   assert.deepEqual(plugin.meta.allowedHosts, ["storage.googleapis.com", "us-central1-aiplatform.googleapis.com", "assets.88api.ai"]);
   assert.deepEqual([...plugin.meta.models].sort(), [model, flashModel, veoModel, veoFastModel].sort());
@@ -84,6 +84,22 @@ test("manifest claims exactly the four public names, never type 41, upstream IDs
     assert.throws(() => plugin.protocols.openai_video.decodeRequest({
       model: name, body: { kind: "json", value: { prompt: "Fixture" } },
     }), /不支持该模型/);
+  }
+});
+
+test("pricing enum lists only the resolutions each model accepts", () => {
+  const enumFor = name => (plugin.meta.usageProfiles.find(p => p.models.includes(name))?.schema ?? plugin.meta.usageSchema).resolution.enum;
+  assert.deepEqual(enumFor(flashModel), ["720p"]);
+  for (const name of [model, veoModel, veoFastModel]) assert.deepEqual(enumFor(name), ["720p", "1080p", "4k"], name);
+  assert.deepEqual(plugin.meta.usageProfiles.map(p => p.models), [[flashModel]]);
+  const flash = plugin.meta.usageProfiles[0].schema;
+  assert.deepEqual(Object.keys(flash).sort(), Object.keys(plugin.meta.usageSchema).sort(), "only the enum narrows");
+  // The narrowed enum still covers every value Omni Flash can bill.
+  for (const resolution of ["360p", "720p"]) {
+    assert.equal(plugin.extractUsage(driver({ duration: 4, resolution }, flashModel, "gemini-omni-flash-preview")).resolution, "720p");
+  }
+  for (const resolution of ["1080p", "4k"]) {
+    assert.throws(() => decode({ duration: 4, resolution }, flashModel), /输出分辨率仅支持 720p/);
   }
 });
 
