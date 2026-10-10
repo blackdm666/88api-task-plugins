@@ -146,9 +146,9 @@ test('input download failures become guidance and links or host names never reac
 test('valid requests, identities, idempotency and usage match the 2.0.0 baseline', async () => {
   const source = (await readFile(new URL('./fixtures/minimax-h3-2.0.0.js', import.meta.url), 'utf8')).replace(/\r\n/g, '\n')
   assert.equal(createHash('sha256').update(source).digest('hex'), '265d05def143b2e16dd0b24dbdaa500ef23e3be032bad6d056c58148d725473c')
-  const { version: _, ...metadata } = plugin.meta
+  const { version: _, usageSchema: { output_resolution: ____, ...usageSchema }, ...metadata } = plugin.meta
   const { version: __, usageExamples: ___, ...oldMetadata } = old.meta
-  assert.deepEqual(metadata, oldMetadata)
+  assert.deepEqual({ ...metadata, usageSchema }, oldMetadata)
   for (const model of ['MiniMax-H3', 'minimax-h3-768p', 'dmc-minimax-h3']) {
     for (const input of [
       { prompt: 'Fixture' },
@@ -165,7 +165,7 @@ test('valid requests, identities, idempotency and usage match the 2.0.0 baseline
       assert.deepEqual(decoded, old.protocols.openai_video.decodeRequest(ctx))
       const d = { ...driver({}), model, upstreamModel: model, requestBody: decoded.requestBody }
       assert.deepEqual(plugin.buildSubmitRequest(d), old.buildSubmitRequest(d))
-      assert.deepEqual(plugin.extractUsage(d), old.extractUsage(d))
+      assert.deepEqual(plugin.extractUsage(d), { ...old.extractUsage(d), output_resolution: '768p' })
       assert.equal(plugin.buildSubmitRequest(d).headers['Idempotency-Key'], 'public-fixture')
       assert.equal(plugin.extractUsage({ ...d, usagePurpose: 'billing_ratios' }), null)
     }
@@ -178,9 +178,43 @@ test('valid requests, identities, idempotency and usage match the 2.0.0 baseline
 })
 
 test('2.0.3+ publishes no model-square price examples', () => {
-  assert.equal(plugin.meta.version, '2.0.4')
+  assert.equal(plugin.meta.version, '2.1.0')
   assert.equal('usageExamples' in plugin.meta, false)
-  assert.deepEqual(Object.keys(plugin.meta.usageSchema), ['seconds'])
+  assert.deepEqual(Object.keys(plugin.meta.usageSchema), ['seconds', 'output_resolution'])
+})
+
+// 2.1.0: the model square renders one price column per enum value.
+test('H3 bills the output resolution tier and still sends the upstream spelling', () => {
+  assert.deepEqual(plugin.meta.usageSchema.output_resolution, {
+    enum: ['768p'],
+    enumLabels: { '768p': { en: '768P', zh: '768P' } },
+    description: { en: 'Output video resolution', zh: '输出视频分辨率' },
+  })
+  for (const input of [
+    {}, { resolution: '768P' }, { resolution: '768p' }, { resolution: ' 768 ' },
+    { size: '1366x768' }, { metadata: { resolution: '768P' } }, { metadata: { resolution: '768p' }, resolution: 'ignored' },
+  ]) {
+    const decoded = decode(json({ duration: 6, ...input }))
+    // The request keeps the client's spelling; the host only checks keys named like usage fields.
+    assert.deepEqual(decoded.requestBody, old.protocols.openai_video.decodeRequest({ model: 'minimax-h3-768p', body: json({ duration: 6, ...input }) }).requestBody)
+    const d = { ...driver({}), requestBody: decoded.requestBody }
+    assert.equal(plugin.buildSubmitRequest(d).body.resolution, '768P')
+    assert.deepEqual(plugin.buildSubmitRequest(d).body, old.buildSubmitRequest(d).body)
+    assert.deepEqual(plugin.extractUsage(d), { seconds: 6, output_resolution: '768p' })
+  }
+  // A sold name mapped to the H3 alias decodes generically, then bills the tier.
+  const mapped = plugin.protocols.openai_video.decodeRequest({ model: 'dynamic-sale', body: json({ duration: 5, resolution: '768P' }) })
+  assert.equal(mapped.requestBody.resolution, '768P')
+  assert.deepEqual(plugin.extractUsage({ ...driver({}), model: 'dynamic-sale', upstreamModel: 'dmc-minimax-h3', requestBody: mapped.requestBody }),
+    { seconds: 5, output_resolution: '768p' })
+  for (const resolution of ['1080p', '480P', '4k']) {
+    assert.throws(() => plugin.extractUsage({ ...driver({}), requestBody: { prompt: 'Fixture', resolution } }),
+      { message: '当前模型仅支持 768P 分辨率，请选择 768P。' })
+  }
+  // Other upstream models keep forwarding the requested value unbilled.
+  const generic = { ...driver({ duration: 7, resolution: '1080P' }), upstreamModel: 'future-model' }
+  assert.equal(plugin.buildSubmitRequest(generic).body.resolution, '1080P')
+  assert.deepEqual(plugin.extractUsage(generic), { seconds: 7 })
 })
 
 test('polling, terminal progress, download and historical task rendering stay compatible', () => {

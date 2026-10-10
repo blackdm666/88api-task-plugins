@@ -143,6 +143,7 @@ func TestIndependentPluginCatalogueMinimaxMessages(t *testing.T) {
 	usage, err := plugin.Engine.Call(context.Background(), "extractUsage", driver)
 	require.NoError(t, err)
 	assert.EqualValues(t, 15, usage.(map[string]any)["seconds"])
+	assert.Equal(t, "768p", usage.(map[string]any)["output_resolution"])
 
 	for _, tc := range []struct {
 		status, wantStatus, progress, reason string
