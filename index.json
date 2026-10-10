@@ -519,8 +519,15 @@
       "protocols": [
         "openai_video"
       ],
-      "latest": "1.6.2",
+      "latest": "1.7.0",
       "versions": [
+        {
+          "version": "1.7.0",
+          "path": "plugins/vertex-omni/1.7.0/plugin.js",
+          "sha256": "d5fddacfa064ba5b831702dd0e97bb0a5390b6359ddb3b9f11f8872e8d4d1ddc",
+          "minApiVersion": 1,
+          "kind": "task"
+        },
         {
           "version": "1.6.2",
           "path": "plugins/vertex-omni/1.6.2/plugin.js",
@@ -628,12 +635,27 @@
         "en": "88API channel integration plugin",
         "zh": "88API渠道集成插件"
       },
-      "models": [],
+      "models": [
+        "SD2.5",
+        "SD2.0",
+        "kling-3.0-turbo",
+        "seedance-2.0-mini官方版",
+        "seedance-2.5官方版",
+        "seedance-2.0官方版",
+        "seedance-2.0-fast官方版"
+      ],
       "protocols": [
         "openai_video"
       ],
-      "latest": "3.1.0",
+      "latest": "3.2.0",
       "versions": [
+        {
+          "version": "3.2.0",
+          "path": "plugins/xm-video/3.2.0/plugin.js",
+          "sha256": "aa52cc4ecba0f9bc06427ffa541b3f4a12399fe3e870f7366a0e4ee170415eae",
+          "minApiVersion": 1,
+          "kind": "task"
+        },
         {
           "version": "3.1.0",
           "path": "plugins/xm-video/3.1.0/plugin.js",
