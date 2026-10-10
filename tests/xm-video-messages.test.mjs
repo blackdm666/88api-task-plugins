@@ -91,11 +91,17 @@ test('valid requests, billing and task results are identical to deployed 3.0.3',
     ]) {
       const ctx = { model, body: { kind: 'json', value: input } }
       const decoded = plugin.decodeRequest(ctx)
-      assert.deepEqual(decoded, old.decodeRequest(ctx))
+      // 3.1.0 only adds the fixed tier key to the stored request and to usage.
+      const tier = (model.match(/(480p|720p|768p|1080p|2k|4k)/i) || [])[1].toLowerCase()
+      const { resolution, ...stored } = decoded.requestBody
+      assert.equal(resolution, tier)
+      assert.deepEqual({ ...decoded, requestBody: stored }, old.decodeRequest(ctx))
       const driver = { model, requestBody: decoded.requestBody, baseUrl: 'https://example.invalid', apiKey: 'fixture' }
       if (model.startsWith('SD2.5 ')) driver.upstreamModel = 'lltai-vs-2.5'
       assert.deepEqual(plugin.buildSubmitRequest(driver), old.buildSubmitRequest(driver))
-      assert.deepEqual(plugin.extractUsage(driver), old.extractUsage(driver))
+      const { resolution: billed, ...usage } = plugin.extractUsage(driver)
+      assert.equal(billed, tier)
+      assert.deepEqual(usage, old.extractUsage(driver))
     }
   }
   for (const status of ['pending', 'processing', 'completed', 'failed', 'cancelled']) {
