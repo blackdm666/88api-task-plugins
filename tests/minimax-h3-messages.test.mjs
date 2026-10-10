@@ -117,7 +117,30 @@ test('upstream error text and codes are not translated or rewritten', () => {
   assert.equal(plugin.parseTaskResult({}, { task: { status: 'failed', error: { code: 'E_PROVIDER_42' } } }).reason,
     'E_PROVIDER_42: 视频生成失败，服务端未提供具体原因，请联系管理员。')
   const task = { status: 'FAILURE', fail_reason: 'provider_code: Keep upstream text intact' }
-  assert.deepEqual(plugin.protocols.openai_video.render({}, task), old.protocols.openai_video.render({}, task))
+  assert.deepEqual(plugin.protocols.openai_video.render({}, task), withNeutralCode(old.protocols.openai_video.render({}, task)))
+})
+
+// 2.0.4: the public error code no longer names the upstream provider.
+const withNeutralCode = output => output.error ? { ...output, error: { ...output.error, code: 'video_task_failed' } } : output
+
+test('input download failures become guidance and links or host names never reach customers', () => {
+  const download = 'download media: Get "https://cheapest-twist-example.trycloudflare.com/a1b2.png": net/http: timeout awaiting response headers'
+  assert.deepEqual(plugin.parseTaskResult({}, { task: { status: 'failed', error: { code: 'input_download_failed', message: download } } }), {
+    code: 0, status: 'FAILURE', progress: '100%', reason: 'input_download_failed: 素材下载超时，请检查素材链接可公开访问后重试。',
+  })
+  assert.equal(plugin.parseTaskResult({}, { task: { status: 'failed', error: { code: 'input_download_failed', message: 'download media: HTTP 404' } } }).reason,
+    'input_download_failed: 素材下载失败，请检查素材链接可公开访问后重试。')
+  assert.equal(plugin.parseTaskResult({}, { error: { type: 'input_download_failed', message: download, http_code: 400 } }).reason,
+    'input_download_failed: 素材下载超时，请检查素材链接可公开访问后重试。')
+  assert.throws(() => plugin.parseSubmitResponse({}, { body: { error: { type: 'bad_request', message: download } } }),
+    { message: 'input_download_failed: 素材下载超时，请检查素材链接可公开访问后重试。' })
+  const leaked = plugin.parseTaskResult({}, { task: { status: 'failed', error: { code: 'x', message: '处理失败 https://bucket.example-cdn.com/v.mp4?sig=1 请联系 ops.vendor-gateway.best' } } }).reason
+  assert.doesNotMatch(leaked, /https?:|example-cdn|vendor-gateway/)
+  assert.match(leaked, /^x: 处理失败/)
+  // Historical tasks rendered through GET /v1/videos use the same filter.
+  const rendered = plugin.protocols.openai_video.render({}, { status: 'FAILURE', fail_reason: 'input_download_failed: ' + download })
+  assert.deepEqual(rendered.error, { code: 'video_task_failed', message: 'input_download_failed: 素材下载超时，请检查素材链接可公开访问后重试。' })
+  assert.doesNotMatch(JSON.stringify(plugin.protocols.openai_video.render({}, { status: 'FAILURE' })), /dmc/i)
 })
 
 test('valid requests, identities, idempotency and usage match the 2.0.0 baseline', async () => {
@@ -154,8 +177,8 @@ test('valid requests, identities, idempotency and usage match the 2.0.0 baseline
   assert.deepEqual(plugin.extractUsage(generic), old.extractUsage(generic))
 })
 
-test('2.0.3 publishes no model-square price examples', () => {
-  assert.equal(plugin.meta.version, '2.0.3')
+test('2.0.3+ publishes no model-square price examples', () => {
+  assert.equal(plugin.meta.version, '2.0.4')
   assert.equal('usageExamples' in plugin.meta, false)
   assert.deepEqual(Object.keys(plugin.meta.usageSchema), ['seconds'])
 })
@@ -183,7 +206,7 @@ test('polling, terminal progress, download and historical task rendering stay co
   }
   for (const status of ['NOT_START', 'SUBMITTED', 'QUEUED', 'IN_PROGRESS', 'SUCCESS', 'FAILURE']) {
     const task = { task_id: 'historical-id', status, progress: '99%', created_at: 10, updated_at: 20, properties: { origin_model_name: 'minimax-h3-768p' }, fail_reason: 'upstream detail' }
-    assert.deepEqual(plugin.protocols.openai_video.render({}, task), old.protocols.openai_video.render({}, task))
+    assert.deepEqual(plugin.protocols.openai_video.render({}, task), withNeutralCode(old.protocols.openai_video.render({}, task)))
   }
   // Do not turn an incomplete success payload into a new terminal/refund rule.
   const missingVideo = { task: { status: 'succeeded' } }

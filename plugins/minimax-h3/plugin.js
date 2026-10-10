@@ -6,7 +6,7 @@ export const meta = {
     en: "88API channel integration plugin",
     zh: "88API渠道集成插件",
   },
-  version: "2.0.3",
+  version: "2.0.4",
   author: { name: "88API" },
   // Internal routing identity. The DMC upstream model remains MiniMax-H3 in
   // buildSubmitRequest; keeping the registry name unique lets this plugin
@@ -253,6 +253,21 @@ function apiError(body) {
   return { code: code, message: message, statusCode: Number.isInteger(statusCode) ? statusCode : 0 };
 }
 
+const FAILED_WITHOUT_REASON = "视频生成失败，服务端未提供具体原因，请联系管理员。";
+
+// Failure reasons reach customers. Input download failures quote our asset
+// links, so they become download guidance; other links and host names are dropped.
+function publicReason(reason) {
+  if (/input_download_failed|download media|failed to download/i.test(reason)) {
+    return "input_download_failed: " + (/timeout|timed out|超时/i.test(reason) ? "素材下载超时" : "素材下载失败") + "，请检查素材链接可公开访问后重试。";
+  }
+  return reason
+    .replace(/[a-z][a-z0-9+.-]*:\/\/\S+/gi, "")
+    .replace(/\b(?:[a-z0-9-]+\.)+(?:com|net|org|best|cn|io|ai|cc|top|xyz|dev|app|co|me|info|site|online|tech|cloud)\b\S*/gi, "")
+    .replace(/[ \t]{2,}/g, " ")
+    .trim() || FAILED_WITHOUT_REASON;
+}
+
 function queryTask(body) {
   const task = body && typeof body === "object" && !Array.isArray(body) ? body.task : null;
   return task && typeof task === "object" && !Array.isArray(task) ? task : null;
@@ -308,7 +323,7 @@ export function buildSubmitRequest(ctx) {
 export function parseSubmitResponse(_ctx, response) {
   const body = response.body || {};
   const error = apiError(body);
-  if (error) throw new Error(error.code + ": " + error.message);
+  if (error) throw new Error(publicReason(error.code + ": " + error.message));
   const taskId = trimmed(body.task_id);
   if (!taskId) throw new Error("视频服务未返回任务编号，请联系管理员确认是否已受理，勿重复提交。");
   return { taskId: taskId, taskData: body };
@@ -331,7 +346,7 @@ export function parseTaskResult(_ctx, body) {
   const error = apiError(body);
   if (error) {
     if (error.statusCode === 408 || error.statusCode === 429 || error.statusCode >= 500) throw new Error(error.code + ": " + error.message);
-    return { code: error.statusCode, status: "FAILURE", progress: "100%", reason: error.code + ": " + error.message };
+    return { code: error.statusCode, status: "FAILURE", progress: "100%", reason: publicReason(error.code + ": " + error.message) };
   }
   const task = queryTask(body);
   if (!task) throw new Error("暂未获取到视频任务信息，请稍后查询，无需重新提交生成。");
@@ -348,8 +363,8 @@ export function parseTaskResult(_ctx, body) {
     const code = trimmed(taskError.code) || "task_" + task.status;
     const message = trimmed(taskError.message);
     // Preserve provider details exactly as before; localize only our fallback.
-    const fallback = task.status === "cancelled" ? "视频任务已取消。" : "视频生成失败，服务端未提供具体原因，请联系管理员。";
-    result.reason = message ? code + ": " + message : (trimmed(taskError.code) ? code + ": " : "") + fallback;
+    const fallback = task.status === "cancelled" ? "视频任务已取消。" : FAILED_WITHOUT_REASON;
+    result.reason = message ? publicReason(code + ": " + message) : (trimmed(taskError.code) ? code + ": " : "") + fallback;
   }
   return result;
 }
@@ -401,7 +416,7 @@ function renderOpenAIVideo(task) {
   };
   if (task.updated_at) output.completed_at = task.updated_at;
   if (task.status === "FAILURE") {
-    output.error = { code: "dmc_task_failed", message: task.fail_reason || "视频生成失败，服务端未提供具体原因，请联系管理员。" };
+    output.error = { code: "video_task_failed", message: task.fail_reason ? publicReason(task.fail_reason) : FAILED_WITHOUT_REASON };
   }
   return output;
 }
