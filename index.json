@@ -166,8 +166,15 @@
       "protocols": [
         "openai_video"
       ],
-      "latest": "1.2.0",
+      "latest": "1.2.1",
       "versions": [
+        {
+          "version": "1.2.1",
+          "path": "plugins/grok-video/1.2.1/plugin.js",
+          "sha256": "de5514b1e0f26ad4dc2f07605139d838b9c33b9cf23b3c48c88197aadf57f997",
+          "minApiVersion": 1,
+          "kind": "task"
+        },
         {
           "version": "1.2.0",
           "path": "plugins/grok-video/1.2.0/plugin.js",
@@ -302,8 +309,15 @@
       "protocols": [
         "openai_video"
       ],
-      "latest": "2.0.2",
+      "latest": "2.0.3",
       "versions": [
+        {
+          "version": "2.0.3",
+          "path": "plugins/minimax-h3/2.0.3/plugin.js",
+          "sha256": "126cb457d09d20c506f4cf118a2624878d6fbd367b1f7511009a8a53c07ace25",
+          "minApiVersion": 1,
+          "kind": "task"
+        },
         {
           "version": "2.0.2",
           "path": "plugins/minimax-h3/2.0.2/plugin.js",
