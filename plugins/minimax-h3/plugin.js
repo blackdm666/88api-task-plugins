@@ -1,3 +1,7 @@
+// Billable output tiers in display order; the first is the default. Adding an
+// upstream resolution takes one entry here and one branch in the price expression.
+const RESOLUTIONS = [{ key: "768p", upstream: "768P", label: "768P" }];
+
 export const meta = {
   apiVersion: 1,
   key: "minimax-h3",
@@ -6,7 +10,7 @@ export const meta = {
     en: "88API channel integration plugin",
     zh: "88API渠道集成插件",
   },
-  version: "2.0.4",
+  version: "2.1.0",
   author: { name: "88API" },
   // Internal routing identity. The DMC upstream model remains MiniMax-H3 in
   // buildSubmitRequest; keeping the registry name unique lets this plugin
@@ -20,6 +24,14 @@ export const meta = {
       type: "number",
       unit: "second",
       description: { en: "Video generation unit price", zh: "视频生成单价" },
+    },
+    // Not named "resolution": the host validates every request key named like a
+    // usage field, and decodeRequest cannot tell an H3 request from a generic one
+    // before the channel mapping is known.
+    output_resolution: {
+      enum: RESOLUTIONS.map(function (tier) { return tier.key; }),
+      enumLabels: Object.fromEntries(RESOLUTIONS.map(function (tier) { return [tier.key, { en: tier.label, zh: tier.label }]; })),
+      description: { en: "Output video resolution", zh: "输出视频分辨率" },
     },
   },
 };
@@ -219,8 +231,15 @@ function durationFor(req) {
 function resolutionFor(req) {
   const metadata = req.metadata && typeof req.metadata === "object" && !Array.isArray(req.metadata) ? req.metadata : {};
   const raw = trimmed(metadata.resolution) || trimmed(req.resolution) || trimmed(req.size);
-  if (!raw || raw.toUpperCase().includes("768")) return "768P";
-  throw new Error("当前模型仅支持 768P 分辨率，请选择 768P。");
+  if (!raw) return RESOLUTIONS[0];
+  const value = raw.toLowerCase();
+  const tier = RESOLUTIONS.find(function (item) { return value === item.key; }) ||
+    RESOLUTIONS.find(function (item) { return value.includes(item.key.replace(/p$/, "")); });
+  if (tier) return tier;
+  const labels = RESOLUTIONS.map(function (item) { return item.label; });
+  throw new Error(labels.length === 1
+    ? "当前模型仅支持 " + labels[0] + " 分辨率，请选择 " + labels[0] + "。"
+    : "当前模型支持的分辨率：" + labels.join("、") + "，请选择其中之一。");
 }
 
 function hasVisual(content) {
@@ -303,7 +322,7 @@ export function buildSubmitRequest(ctx) {
   const body = {
     model: upstreamModelFor(ctx),
     content: content,
-    resolution: h3(ctx) ? resolutionFor(req) : trimmed(req.resolution) || trimmed((req.metadata || {}).resolution),
+    resolution: h3(ctx) ? resolutionFor(req).upstream : trimmed(req.resolution) || trimmed((req.metadata || {}).resolution),
     duration: h3(ctx) ? durationFor(req) : genericDuration(req),
     ratio: h3(ctx) ? ratioFor(req, content) : trimmed(req.ratio) || trimmed((req.metadata || {}).ratio),
   };
@@ -331,7 +350,9 @@ export function parseSubmitResponse(_ctx, response) {
 
 export function extractUsage(ctx) {
   if (ctx.usagePurpose === "billing_ratios") return null;
-  return { seconds: h3(ctx) ? durationFor(ctx.requestBody || {}) : genericDuration(ctx.requestBody || {}) };
+  const req = ctx.requestBody || {};
+  if (!h3(ctx)) return { seconds: genericDuration(req) };
+  return { seconds: durationFor(req), output_resolution: resolutionFor(req).key };
 }
 
 export function buildQueryRequest(ctx) {
