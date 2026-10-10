@@ -127,5 +127,24 @@ test('usage schema declares every tier the plugin can bill', () => {
     for (const [key] of tiers) assert.ok(declared.includes(key), `${series} ${key}`)
   }
   assert.ok(declared.includes('768p'))
-  assert.equal(plugin.meta.version, '3.1.0')
+  assert.equal(plugin.meta.version, '3.2.0')
+})
+
+test('each series declares exactly the tiers it sells, in display order', () => {
+  assert.equal(plugin.meta.dynamicModels, true)
+  assert.deepEqual(plugin.meta.models, Object.keys(SERIES))
+  assert.deepEqual(plugin.meta.usageProfiles.map((p) => p.models), Object.keys(SERIES).map((name) => [name]))
+  for (const profile of plugin.meta.usageProfiles) {
+    const [series] = profile.models
+    const keys = SERIES[series].tiers.map(([key]) => key)
+    assert.deepEqual(profile.schema.resolution.enum, keys, series)
+    assert.deepEqual(Object.keys(profile.schema.resolution.enumLabels), keys, series)
+    assert.deepEqual(profile.schema.seconds, plugin.meta.usageSchema.seconds, series)
+    for (const [key] of SERIES[series].tiers) assert.equal(submit(series, { resolution: key }).usage.resolution, key)
+  }
+  // Legacy fixed names and unknown channel models keep the superset schema.
+  for (const name of ['SD2.5 480P', 'SD2.0 4K', 'kling-3.0-turbo-4k', 'Seedance-2.5-720p官方版', 'future-video']) {
+    assert.ok(!plugin.meta.models.includes(name), name)
+  }
+  assert.deepEqual(plugin.meta.usageSchema.resolution.enum, ['480p', '720p', '768p', '1080p', '2k', '4k'])
 })

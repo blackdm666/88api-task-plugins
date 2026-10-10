@@ -15,7 +15,7 @@
 | Vertex Omni (isolated QA) | `vertex-omni` | `1.0.0` |
 | Alibaba Bailian (factory-compatible override) | `alibaba` | `1.4.2` |
 
-Minimax-H3 与 XM-Video 的初始独立版本与当时88API镜像和生产自定义插件源码一致，仅迁移维护及发布位置；Minimax-H3 Async 是另行新增的插件。XM-Video 3.1.0 起按系列售卖，见下方 XM-Video 小节。
+Minimax-H3 与 XM-Video 的初始独立版本与当时88API镜像和生产自定义插件源码一致，仅迁移维护及发布位置；Minimax-H3 Async 是另行新增的插件。XM-Video 3.1.0 起按系列售卖，3.2.0 起各系列只公布自己的分辨率档位，见下方 XM-Video 小节。
 
 ## Alibaba Bailian：Wan3 超宽画幅修正
 
@@ -444,6 +444,10 @@ configuration in this repository.
   示例：`u("resolution") == "480p" ? tier("480P", u("seconds") * a) : (u("resolution") == "720p" ? tier("720P", u("seconds") * b) : tier("1080P", u("seconds") * c))`。
 - 宿主会按该枚举校验请求体中所有名为 `resolution` 的键，插件因此只在请求中保留规范档位；未声明的动态模型
   不上报档位，请求的分辨率改存为 `quality` 原样转给上游。
+- `xm-video@3.2.0` 起，每个系列名在 `meta.models` 中声明，并通过 `usageProfiles` 只公布本系列售卖的档位
+  （如 `SD2.5` 为 480p/720p/1080p，`seedance-2.5官方版` 仅 720p）。模型广场的横向价格表按枚举逐档列出，
+  共用 6 档枚举会把未售档位按兜底价展示。旧分档名与未声明的动态模型仍使用 6 档超集，计费与请求不变。
+  横向价格表还需要在模型资料里开启 `compact_pricing_display`。
 - 新增上游分辨率：在系列定义里加一个档位，并在该系列价格表达式中加一个分支。
 - 3.0.x 的分档名（`SD2.5 480P`、`kling-3.0-turbo-4k`、`seedance-2.0-mini-720p`、`Seedance-2.0-720p官方版` 等，
   以及历史 `SD2.0 4k`）继续可用：由所属系列派生、固定原档位、忽略请求分辨率，上游请求与 3.0.x 完全一致。

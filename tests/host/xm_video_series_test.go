@@ -104,4 +104,43 @@ func TestIndependentPluginCatalogueXinMengSeriesResolution(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "4K", body["resolution"])
 	assert.NotContains(t, facts, "resolution")
+
+	// A tier outside the series profile never reaches quota calculation.
+	_, _, err = run("SD2.5", "lltai-vs-2.5", map[string]any{"prompt": "Fixture", "duration": 6, "ratio": "16:9", "resolution": "768p"}, false)
+	assert.Error(t, err)
+}
+
+// The model square renders one price column per enum value, so each series
+// must carry only the tiers it sells. Runtime billing resolves the same profile
+// through the channel's upstream mapping; legacy names keep the superset.
+func TestIndependentPluginCatalogueXinMengSeriesUsageProfiles(t *testing.T) {
+	source, err := os.ReadFile("../../../../plugins/tasks/xm-video/plugin.js")
+	require.NoError(t, err)
+	plugin, err := pluginruntime.NewRegistry().Register(string(source), pluginruntime.Options{})
+	require.NoError(t, err)
+	assert.True(t, plugin.Meta.DynamicModels)
+
+	enum := func(models ...string) []string {
+		schema, _ := plugin.Meta.UsageForModels(models...)
+		return schema["resolution"].Enum
+	}
+	superset := []string{"480p", "720p", "768p", "1080p", "2k", "4k"}
+	for model, tiers := range map[string][]string{
+		"SD2.5":                {"480p", "720p", "1080p"},
+		"SD2.0":                {"480p", "720p", "1080p", "4k"},
+		"kling-3.0-turbo":      {"720p", "1080p", "2k", "4k"},
+		"seedance-2.0-mini官方版": {"480p", "720p"},
+		"seedance-2.5官方版":      {"720p"},
+		"seedance-2.0官方版":      {"720p"},
+		"seedance-2.0-fast官方版": {"720p"},
+	} {
+		assert.Contains(t, plugin.Meta.Models, model)
+		assert.Equal(t, tiers, enum(model), model)
+	}
+	assert.Equal(t, []string{"480p", "720p", "1080p"}, enum("lltai-vs-2.5", "SD2.5"), "mapped upstream IDs keep the series profile")
+	assert.Equal(t, []string{"480p", "720p", "1080p", "4k"}, enum("lltai-vs-2.0", "SD2.0"))
+	for _, legacy := range []string{"SD2.5 480P", "SD2.0 4K", "kling-3.0-turbo-4k", "seedance-2.0-mini-720p", "Seedance-2.5-720p官方版", "future-video"} {
+		assert.Equal(t, superset, enum(legacy), legacy)
+		assert.NotContains(t, plugin.Meta.Models, legacy)
+	}
 }
